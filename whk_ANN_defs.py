@@ -3,6 +3,7 @@ import os
 import keras
 import math
 import sys
+import configparser as cfg
 from keras.models import Sequential, Model
 from keras.layers import Dense, Input, BatchNormalization, Dropout
 from keras import metrics
@@ -49,16 +50,23 @@ plt.ticklabel_format(style='sci', axis='y', scilimits=(0,0))
 class ANN_environment(object):
 
     def __init__(self):
+        self.config_path = "config_whk_ANN.ini"
+        self.config = cfg.ConfigParser()
+        try:
+            self.config.read(self.config_path)
+        except:
+            raise FileNotFoundError
+
         #A list of more general settings
         self.variables = np.array(["mass_lep1jet2", "pTsys_lep1lep2met", "pTsys_jet1jet2", "mass_lep1jet1", "deltapT_lep1_jet1", "deltaR_lep1_jet2", "deltaR_lep1lep2_jet2", "mass_lep2jet1", "pT_jet2", "deltaR_lep1_jet1", "deltaR_lep1lep2_jet1jet2met", "deltaR_lep2_jet2", "cent_lep2jet2", "deltaR_lep2_jet1"])
         #The seed is used to make sure that both the events and the labels are shuffeled the same way because they are not inherently connected.
-        self.seed = 193
+        self.seed = int(self.config['General']['Seed'])
         #All information necessary for the input
-        #The exact data and targets are set later
-        self.input_path = "/cephfs/user/s6chkirf/work/area/run/test_ANNinput.root"
-        self.signal_sample = "wt_nominal"
-        self.background_sample = "tt_nominal"
-        self.systematics_sample = "wt_DS"
+        #The exact data and targets are set late
+        self.input_path = self.config['General']['InputPath']
+        self.signal_sample = self.config['General']['SignalSample']
+        self.background_sample = self.config['General']['BackgroundSample']
+        self.systematics_sample = self.config['General']['SystematicsSample']
         self.signal_tree = ur.open(self.input_path)[self.signal_sample]
         self.background_tree = ur.open(self.input_path)[self.background_sample]
         self.systematic_tree = ur.open(self.input_path)[self.systematics_sample]
@@ -81,28 +89,28 @@ class ANN_environment(object):
         #All information for the length of the training. Beware that epochs might only come into the pretraining
         #Iterations are used for the adversarial part of the training
         #original: 10 10 1000
-        self.discriminator_epochs = 3
-        self.adversary_epochs = 3
-        self.training_iterations = 10
+        self.discriminator_epochs = int(self.config['Training']['DiscriminatorEpochs'])
+        self.adversary_epochs = int(self.config['Training']['AdversaryEpochs'])
+        self.training_iterations = int(self.config['Training']['TrainingIterations'])
         #Setup of the networks, nodes and layers
-        self.discriminator_layers = 5
-        self.discriminator_nodes = 128
-        self.adversary_layers = 4 
-        self.adversary_nodes = 128
+        self.discriminator_layers = int(self.config['Network']['DiscriminatorLayers'])
+        self.discriminator_nodes = int(self.config['Network']['DiscriminatorNodes'])
+        self.adversary_layers = int(self.config['Network']['AdversaryLayers'])
+        self.adversary_nodes = int(self.config['Network']['AdversaryNodes'])
         #Setup of the networks, loss and optimisation
         #original lr/momentum sys.argv 123456
         #0.01 0.001 0.01 0.3 0.3 0.3 0.5
-        self.discriminator_optimizer = SGD(lr = 0.01, momentum = 0.3)
-        self.discriminator_dropout = 0.1
-        self.discriminator_loss = binary_crossentropy
+        self.discriminator_optimizer = SGD(lr = float(self.config['Network']['DiscriminatorLearningRate']), momentum = float(self.config['Network']['DiscriminatorMomentum']))
+        self.discriminator_dropout = float(self.config['Network']['DiscriminatorDropout'])
+ #       self.discriminator_loss = binary_crossentropy
 
-        self.adversary_optimizer = SGD(lr = 0.001, momentum = 0.3)
-        self.adversary_dropout = 0.1
-        self.adversary_loss = binary_crossentropy
+        self.adversary_optimizer = SGD(lr = float(self.config['Network']['AdversaryLearningRate']), momentum = float(self.config['Network']['AdversaryMomentum']))
+        self.adversary_dropout = float(self.config['Network']['AdversaryDropout'])
+ #       self.adversary_loss = binary_crossentropy
 
-        self.combined_optimizer = SGD(lr = 0.01, momentum = 0.3)
+        self.combined_optimizer = SGD(lr = float(self.config['Network']['CombinedLearningRate']), momentum = 0.3)
 
-        self.validation_fraction = 0.4
+        self.validation_fraction = 
 
         #The following set of variables is used to evaluate the result
         #fpr = false positive rate, tpr = true positive rate
@@ -112,6 +120,21 @@ class ANN_environment(object):
         self.auc = 0.
 
         self.lambda_value = -0.01
+
+#Load the config 
+    def load_config(self):
+        self.config = cfg.ConfigParser()
+        try:
+            self.config.read(self.config_path)
+        except:
+            raise FileNotFoundError
+
+    #set all values as configured
+
+    #Training
+        self.discriminator_epochs = int(self.config["Training"]["DiscriminatorEpochs"])
+        self.adversary_epochs = int(self.config["Training"]['AdversaryEpochs'])
+        self.training_iterations = int(self.config['Training']['TrainingIterations'])
 
 #Initializing the data and target samples
 #The split function cuts into a training sample and a test sample
@@ -161,10 +184,45 @@ class ANN_environment(object):
         #A scaler makes sure that all variables are normalised to 1 and have the same order of magnitude for that reason
         scaler = StandardScaler()
         self.sample_training = scaler.fit_transform(self.sample_training)
-        self.sample_validation = scaler.fit_transform(self.sample_validation)
+       
+#Initializing the data and target samples
+#The split function cuts into a training sample and a test sample
+#Important note: Have to use the same random seed so that event and target stay in the same order as we shuffle
+    def initialize_sample(self):
+        #Signal and background are needed for the classification task, signal and systematic for the adversarial part
+        #In this first step the events are retrieved from the tree, using the chosen set of variables
+        #The numpy conversion is redundant
+        self.events_signal = self.signal_tree.pandas.df(self.variables).to_numpy()
+        self.events_background = self.background_tree.pandas.df(self.variables).to_numpy()
+        self.events_systematic = self.systematic_tree.pandas.df(self.variables).to_numpy()
+        #Setting up the weights. The weights for each tree are stored in 'weight_nominal'
+        self.weight_signal = self.signal_tree.pandas.df('weight_nominal').to_numpy()
+        self.weight_background = self.background_tree.pandas.df('weight_nominal').to_numpy()
+        self.weight_systematic = self.systematic_tree.pandas.df('weight_nominal').to_numpy()
+        #Rehsaping the weights
+        self.weight_signal = np.reshape(self.weight_signal, (len(self.events_signal), 1))
+        self.weight_background = np.reshape(self.weight_background, (len(self.events_background), 1))
+        #original: sys.argv[7]
+        self.weight_background_adversarial = self.weight_background * 0.5
+        self.weight_systematic = np.reshape(self.weight_systematic, (len(self.events_systematic), 1))
+        #Normalisation to the eventcount can be used instead of weights, especially if using data
+        self.norm_signal = np.reshape([1./float(len(self.events_signal)) for x in range(len(self.events_signal))], (len(self.events_signal), 1))
+        self.norm_background = np.reshape([1./float(len(self.events_background)) for x in range(len(self.events_background))], (len(self.events_background), 1))
+        #Calculating the weight ratio to scale the signal weight up. This tries to take the high amount of background into account
+        self.weight_ratio = ( self.weight_signal.sum() + self.weight_systematic.sum() )/ self.weight_background.sum()
+        self.weight_signal = self.weight_signal / self.weight_ratio
+        self.weight_systematic = self.weight_systematic / self.weight_ratio
 
-#-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-#Here the discriminator is built
+        #Setting up the targets
+        #target combined is used to make sure the systematics are seen as signal for the first net in the combined training
+        self.target_signal = np.reshape([1 for x in range(len(self.events_signal))], (len(self.events_signal), 1))
+        self.target_background = np.reshape([0 for x in range(len(self.events_background))], (len(self.events_background), 1))
+        self.target_systematic = np.reshape([1 for x in range( len( self.events_systematic))], (len(self.events_systematic), 1))
+        self.target_systematic_adversarial = np.reshape([0 for x in range( len( self.events_systematic))], (len(self.events_systematic), 1))
+        self.traget_background_adversarial = np.reshape( np.random.randint(2, size =len( self.events_background)), ((len(self.events_background)), 1))
+        #The samples and corresponding targets are now split into a sample for training and a sample for testing. Keep in mind that the same random seed should be used for both splits
+        self.sample_training, self.sample_validation = train_test_split(np.concatenate((self.events_signal, self.events_background, self.events_systematic)), test_size = self.validation_fraction, random_state = self.seed)
+        #Now the discriminator is built
 #It has an input layer fit to the shape of the variables
 #A loop creates the desired amount of deep layers
 #It ends in a single sigmoid layer
@@ -285,8 +343,7 @@ class ANN_environment(object):
 
     def predict_model(self):
 
-        self.model_prediction =
-         self.model_discriminator.predict(self.sample_validation).ravel()
+        self.model_prediction = self.model_discriminator.predict(self.sample_validation).ravel()
         self.fpr, self.tpr, self.threshold = roc_curve(self.target_validation, self.model_prediction)
         self.auc = auc(self.fpr, self.tpr)
 
