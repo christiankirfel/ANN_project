@@ -32,7 +32,8 @@ color_tt2 = '#FF6600'
 
 
 #Setting up the output directories
-output_path = '/cephfs/user/s6chkirf/whk_adversarialruns_' + sys.argv[1] + '_' + sys.argv[2] + '_' + sys.argv[3] + '_' + sys.argv[4] + '_' + sys.argv[5] + '_' +sys.argv[6] + '_' + sys.argv[7] + '/'
+#output_path = '/cephfs/user/s6chkirf/whk_adversarialruns_' + sys.argv[1] + '_' + sys.argv[2] + '_' + sys.argv[3] + '_' + sys.argv[4] + '_' + sys.argv[5] + '_' +sys.argv[6] + '_' + sys.argv[7] + '/'
+output_path = 'output/'
 array_path = output_path + 'arrays/'
 if not os.path.exists(output_path):
     os.makedirs(output_path)
@@ -47,7 +48,7 @@ plt.ticklabel_format(style='sci', axis='y', scilimits=(0,0))
 #This is the main class for the adversarial neural network setup
 class ANN_environment(object):
 
-    def __init__(self, variables):
+    def __init__(self):
         #A list of more general settings
         self.variables = np.array(["mass_lep1jet2", "pTsys_lep1lep2met", "pTsys_jet1jet2", "mass_lep1jet1", "deltapT_lep1_jet1", "deltaR_lep1_jet2", "deltaR_lep1lep2_jet2", "mass_lep2jet1", "pT_jet2", "deltaR_lep1_jet1", "deltaR_lep1lep2_jet1jet2met", "deltaR_lep2_jet2", "cent_lep2jet2", "deltaR_lep2_jet1"])
         #The seed is used to make sure that both the events and the labels are shuffeled the same way because they are not inherently connected.
@@ -79,24 +80,27 @@ class ANN_environment(object):
         #Here are the definitions for the two models
         #All information for the length of the training. Beware that epochs might only come into the pretraining
         #Iterations are used for the adversarial part of the training
-        self.discriminator_epochs = 10
-        self.adversary_epochs = 10
-        self.training_iterations = 1000
+        #original: 10 10 1000
+        self.discriminator_epochs = 3
+        self.adversary_epochs = 3
+        self.training_iterations = 10
         #Setup of the networks, nodes and layers
         self.discriminator_layers = 5
         self.discriminator_nodes = 128
         self.adversary_layers = 4 
         self.adversary_nodes = 128
         #Setup of the networks, loss and optimisation
-        self.discriminator_optimizer = SGD(lr = float(sys.argv[1]), momentum = float(sys.argv[4]))
+        #original lr/momentum sys.argv 123456
+        #0.01 0.001 0.01 0.3 0.3 0.3 0.5
+        self.discriminator_optimizer = SGD(lr = 0.01, momentum = 0.3)
         self.discriminator_dropout = 0.1
         self.discriminator_loss = binary_crossentropy
 
-        self.adversary_optimizer = SGD(lr = float(sys.argv[2]), momentum = float(sys.argv[5]))
+        self.adversary_optimizer = SGD(lr = 0.001, momentum = 0.3)
         self.adversary_dropout = 0.1
         self.adversary_loss = binary_crossentropy
 
-        self.combined_optimizer = SGD(lr = float(sys.argv[3]), momentum = float(sys.argv[6]))
+        self.combined_optimizer = SGD(lr = 0.01, momentum = 0.3)
 
         self.validation_fraction = 0.4
 
@@ -126,7 +130,8 @@ class ANN_environment(object):
         #Rehsaping the weights
         self.weight_signal = np.reshape(self.weight_signal, (len(self.events_signal), 1))
         self.weight_background = np.reshape(self.weight_background, (len(self.events_background), 1))
-        self.weight_background_adversarial = self.weight_background * float(sys.argv[7])
+        #original: sys.argv[7]
+        self.weight_background_adversarial = self.weight_background * 0.5
         self.weight_systematic = np.reshape(self.weight_systematic, (len(self.events_systematic), 1))
         #Normalisation to the eventcount can be used instead of weights, especially if using data
         self.norm_signal = np.reshape([1./float(len(self.events_signal)) for x in range(len(self.events_signal))], (len(self.events_signal), 1))
@@ -212,8 +217,8 @@ class ANN_environment(object):
         #The discriminator and adversary are added up to a single model running on a combined loss function
 
         def make_losses_adversary():
-            def losses_adversary(z_true, z_pred):
-                return self.lambda_value * binary_crossentropy(z_true, z_pred)
+            def losses_adversary(y_true, y_pred):
+                return self.lambda_value * binary_crossentropy(y_true, y_pred)
             return losses_adversary
 
         self.model_combined = Model(inputs = self.adversary_input, outputs = [self.model_discriminator(self.adversary_input), self.model_adversary(self.adversary_input)])
@@ -234,6 +239,8 @@ class ANN_environment(object):
             network.compile
 
         for iteration in range(self.training_iterations):
+
+            print('Running training: Iteration ' + str(iteration) + ' of ' + str(self.training_iterations))
 
             self.save_losses(iteration, self.model_combined, losses_test, losses_train)
 
@@ -260,6 +267,8 @@ class ANN_environment(object):
 
 
     def pretrain_discriminator(self):
+        
+        print('Pretraining discriminator with ' + str(self.discriminator_epochs) + ' epochs.')
 
         #print(self.target_training[12:500])
         #print(self.target_training[-1:-100])
@@ -276,7 +285,8 @@ class ANN_environment(object):
 
     def predict_model(self):
 
-        self.model_prediction = self.model_discriminator.predict(self.sample_validation).ravel()
+        self.model_prediction =
+         self.model_discriminator.predict(self.sample_validation).ravel()
         self.fpr, self.tpr, self.threshold = roc_curve(self.target_validation, self.model_prediction)
         self.auc = auc(self.fpr, self.tpr)
 
@@ -439,7 +449,8 @@ class ANN_environment(object):
 #In the following options and variables are read in
 #This is done to keep the most important features clearly represented
 
-with open('/cephfs/user/s6chkirf/whk_ANN_variables.txt','r') as varfile:
+#with open('/cephfs/user/s6chkirf/whk_ANN_variables.txt','r') as varfile:
+with open('whk_ANN_variables.txt','r') as varfile:
     variableList = varfile.read().splitlines() 
 
 print(variableList)
@@ -459,7 +470,10 @@ print(variableList)
 #    # a dictionary of options is returned
 
 
-first_training = ANN_environment(variables = variableList)
+#first_training = ANN_environment(variables = variableList)
+print('Don\'t mind me, just training some networks')
+
+first_training = ANN_environment()
 first_training.initialize_sample()
 first_training.build_discriminator()
 first_training.build_adversary()
@@ -471,5 +485,5 @@ first_training.predict_model()
 first_training.plot_roc()
 first_training.plot_separation()
 first_training.plot_separation_adversary()
-#first_training.plot_separation_adversary()
+#first_trainings.plot_separation_adversary()
 #first_training.plot_losses()
