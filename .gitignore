@@ -1,2 +1,8 @@
 # ignore output
 output/
+
+# ignore VSC files
+.vscode/
+
+# ignore any root files
+*.root
