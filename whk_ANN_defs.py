@@ -1,24 +1,31 @@
-#Loading the packages for running the networks
+#Loading base packages
 import os
-import keras
 import math
 import sys
 import configparser as cfg
+
+#Loading Keras
+import keras
 from keras.models import Sequential, Model
 from keras.layers import Dense, Input, BatchNormalization, Dropout
 from keras import metrics
 from keras.optimizers import SGD
 from keras.losses import binary_crossentropy
+
+#Loading sklearn for data processing & analysis
 import sklearn as skl
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import roc_curve, auc
 from sklearn.preprocessing import StandardScaler
+
 #Loading the packages for handling the data
 import uproot as ur
 import pandas 
 import numpy as np
+
 #Loading packages needed for plottting
 import matplotlib.pyplot as plt
+
 #Defining colours for the plots
 #The colours were chosen using the xkcd guice
 #color_tW = '#66FFFF'
@@ -50,12 +57,16 @@ plt.ticklabel_format(style='sci', axis='y', scilimits=(0,0))
 class ANN_environment(object):
 
 	def __init__(self):
+		#load the default config
+		#important: always use the config file 
 		self.config_path = "config_whk_ANN.ini"
 		self.config = cfg.ConfigParser()
 		try:
 			self.config.read(self.config_path)
 		except:
 			raise FileNotFoundError
+
+		#TODO load additional config for HTCondor/BAF
 
 		#A list of more general settings
 		self.variables = np.array(["mass_lep1jet2", "pTsys_lep1lep2met", "pTsys_jet1jet2", "mass_lep1jet1", "deltapT_lep1_jet1", "deltaR_lep1_jet2", "deltaR_lep1lep2_jet2", "mass_lep2jet1", "pT_jet2", "deltaR_lep1_jet1", "deltaR_lep1lep2_jet1jet2met", "deltaR_lep2_jet2", "cent_lep2jet2", "deltaR_lep2_jet1"])
