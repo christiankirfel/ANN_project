@@ -1,10 +1,13 @@
+#To time the code
+import time
+
+timeStart = time.time()
+
 #Loading base packages
 import os
 import math
 import sys
 import configparser as cfg
-#To time the code
-import time
 
 #Loading Keras
 import keras
@@ -59,6 +62,7 @@ plt.ticklabel_format(style='sci', axis='y', scilimits=(0,0))
 class ANN_environment(object):
 
 	def __init__(self):
+		""" opens files, loads config and initializes variables """
 		#load the config
 		self.config_path = "config_whk_ANN.ini"
 		self.config = cfg.ConfigParser()
@@ -135,10 +139,15 @@ class ANN_environment(object):
 
 		self.lambda_value = float(self.config['Training']['LambdaValue'])
 
-	#Initializing the data and target samples
-	#The split function cuts into a training sample and a test sample
-	#Important note: Have to use the same random seed so that event and target stay in the same order as we shuffle
+		self.time_list = []
+		self.time_predisc = 0.
+
 	def initialize_sample(self):
+		"""
+		Initializing the data and target samples
+		The split function cuts into a training sample and a test sample
+		Important note: Have to use the same random seed so that event and target stay in the same order as we shuffle
+		"""
 		#Signal and background are needed for the classification task, signal and systematic for the adversarial part
 		#In this first step the events are retrieved from the tree, using the chosen set of variables
 		#The numpy conversion is redundant
@@ -264,32 +273,27 @@ class ANN_environment(object):
 
 		for iteration in range(self.training_iterations):
 
-			print('Running training: Iteration ' + str(iteration) + ' of ' + str(self.training_iterations))
-			print('Start ', time.time())
+			time_temp = time.time()
 
-			self.save_losses(iteration, self.model_combined, losses_test, losses_train)
+			print('Running training: Iteration ' + str(iteration+1) + ' of ' + str(self.training_iterations))
 
-			print('SaveLosses ', time.time())
+			#Only save losses every 5 iterations
+			if iteration % 5 == 0 or iteration == (self.training_iterations):
+				self.save_losses(iteration, self.model_combined, losses_test, losses_train)
 
 			make_trainable(self.model_discriminator, True)
 			make_trainable(self.model_adversary, False)
 
-			print('DiscriminatorTrainable ', time.time())
-
-			self.model_history = self.model_combined.fit(self.sample_training, [self.target_training, self.target_adversarial], epochs=1, batch_size = int(self.config['Training']['BatchSize']), sample_weight = [self.weight_training.ravel(),self.weight_adversarial.ravel()], verbose = 2)
+			self.model_history = self.model_combined.fit(self.sample_training, [self.target_training, self.target_adversarial], epochs=1, batch_size = int(self.config['Training']['BatchSize']), sample_weight = [self.weight_training.ravel(),self.weight_adversarial.ravel()])
 			self.model_history_array.append(self.model_history)
-
-			print('DiscriminatorTrained ', time.time())
 
 			make_trainable(self.model_discriminator, False)
 			make_trainable(self.model_adversary, True)
 
-			print('AdversaryTrainable ', time.time())
-
-			self.adversary_history = self.model_adversary.fit(self.sample_training, self.target_adversarial, epochs=1, batch_size = int(self.config['Training']['BatchSize']), sample_weight = self.weight_training.ravel(), verbose = 2)
+			self.adversary_history = self.model_adversary.fit(self.sample_training, self.target_adversarial, epochs=1, batch_size = int(self.config['Training']['BatchSize']), sample_weight = self.weight_training.ravel())
 			self.adversary_history_array.append(self.adversary_history)
 
-			print('AdversaryTrained ', time.time())
+			self.time_list.append(time.time() - time_temp)
 
 
 	def pretrain_adversary(self):
@@ -302,6 +306,8 @@ class ANN_environment(object):
 
 
 	def pretrain_discriminator(self):
+
+		time_temp = time.time()
 		
 		print('Pretraining discriminator with ' + str(self.discriminator_epochs) + ' epochs.')
 
@@ -313,6 +319,8 @@ class ANN_environment(object):
 		self.discriminator_history = self.model_discriminator.fit(self.sample_training, self.target_training.ravel(), epochs=self.discriminator_epochs, batch_size = int(self.config['Training']['BatchSize']), sample_weight = self.weight_training.ravel(), validation_data = (self.sample_validation, self.target_validation, self.weight_validation.ravel()))
 		self.discriminator_history_array.append(self.discriminator_history)
 		print(self.discriminator_history.history.keys())
+
+		self.time_predisc = time.time() - time_temp
 
 		#for training_iteration in range(self.training_iterations):
 		#    discriminator_history = self.model_discriminator.fit(self.sample_training, self.target_training, epochs=self.discriminator_epochs, validation_data = (self.sample_validation, self.target_validation))
@@ -373,8 +381,8 @@ class ANN_environment(object):
 #losses_train = {"L_f": [], "L_r": [], "L_f - L_r": []}
 
 	def save_losses(self, i, network, lossestest, lossestrain):
-		l_test = network.evaluate(self.sample_training, [self.target_training, self.target_adversarial], verbose = 0)
-		l_train = network.evaluate(self.sample_validation, [self.target_validation, self.target_adversarial_validation], verbose = 0)
+		l_test = network.evaluate(self.sample_training, [self.target_training, self.target_adversarial], batch_size = int(self.config['Training'] ['BatchSize']))
+		l_train = network.evaluate(self.sample_validation, [self.target_validation, self.target_adversarial_validation], batch_size = int(self.config['Training'] ['BatchSize']))
 		lossestest["L_f"].append(l_test[1])
 		lossestest["L_r"].append(-l_test[2])
 		lossestest["L_f - L_r"].append(l_test[0])
@@ -487,6 +495,17 @@ class ANN_environment(object):
 		plt.gcf().savefig(output_path + 'acc.png')
 		plt.gcf().clear()
 
+	def get_speed(self):
+		with open('whk_Benchmark.txt','w') as f:
+			#f.write('Tensorflow ', tensorflow.__version__, '\n')
+			f.write('Keras ', keras.__version__, '\n')
+			f.write('Batch size: ', self.config['Training']['BatchSize'], '\n')
+			f.write('Discriminator epochs: ', self.config['Training']['DiscriminatorEpochs'], '\n')
+			f.write('Iterations: ', self.config['Training']['TrainingIterations'], '\n')
+			f.write('Time for Discriminator pretrain: %.3f\n' % (self.time_predisc))
+			f.write('Time for all Iterations: %.3f\n' % (sum(self.time_list)))
+			f.write('Average time per Epoch: %.3f\n' % (sum(self.time_list)/len(self.time_list)))
+
 #In the following options and variables are read in
 #This is done to keep the most important features clearly represented
 
@@ -495,20 +514,6 @@ with open('whk_ANN_variables.txt','r') as varfile:
 	variableList = varfile.read().splitlines() 
 
 print(variableList)
-#def ReadOptions(region):
-#    with open('/cephfs/user/s6chkirf/config_whk_ANN.txt','r') as infile:
-#        optionsList = infile.read().splitlines()
-#    OptionDict = dict()
-#    for options in optionsList:
-#		# definition of a comment
-#        if options.startswith('#'): continue
-#        templist = options.split(' ')
-#        if len(templist) == 2:
-#            OptionDict[templist[0]] = templist[1]
-#        else:
-#            OptionDict[templist[0]] = templist[1:]
-#    return OptionDict
-#    # a dictionary of options is returned
 
 
 #first_training = ANN_environment(variables = variableList)
@@ -527,3 +532,12 @@ first_training.plot_separation()
 first_training.plot_separation_adversary()
 #first_trainings.plot_separation_adversary()
 #first_training.plot_losses()
+first_training.get_speed()
+
+timeTotal = time.time() - timeStart
+tmins, tsecs = divmod(timeTotal, 60)
+thours, tmins = divmod(tmins, 60)
+
+print('Total time was %.3f seconds. (%f:%2f:%2f)' % ((time.time() - timeStart), thours, tmins, tsecs))
+with open('whk_Benchmark.txt','a') as f:
+	f.write('Total time was %.3f seconds. (%f:%2f:%2f)' % ((time.time() - timeStart), thours, tmins, tsecs))
