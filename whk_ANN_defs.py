@@ -3,6 +3,8 @@ import os
 import math
 import sys
 import configparser as cfg
+#To time the code
+import time
 
 #Loading Keras
 import keras
@@ -57,14 +59,14 @@ plt.ticklabel_format(style='sci', axis='y', scilimits=(0,0))
 class ANN_environment(object):
 
 	def __init__(self):
-		#load the default config
-		#important: always use the config file 
+		#load the config
 		self.config_path = "config_whk_ANN.ini"
 		self.config = cfg.ConfigParser()
 		try:
 			self.config.read(self.config_path)
 		except:
-			raise FileNotFoundError
+			print('[WARNING] No config file found. Using defaults')
+			self.config.read("default_whk_ANN.ini")
 
 		#TODO load additional config for HTCondor/BAF
 
@@ -113,11 +115,12 @@ class ANN_environment(object):
 		#0.01 0.001 0.01 0.3 0.3 0.3 0.5
 		self.discriminator_optimizer = SGD(lr = float(self.config['Network']['DiscriminatorLearningRate']), momentum = float(self.config['Network']['DiscriminatorMomentum']))
 		self.discriminator_dropout = float(self.config['Network']['DiscriminatorDropout'])
- #       self.discriminator_loss = binary_crossentropy
+		self.discriminator_inputdropout = float(self.config['Network']['DiscriminatorInputDropout'])
+ 		#self.discriminator_loss = binary_crossentropy
 
 		self.adversary_optimizer = SGD(lr = float(self.config['Network']['AdversaryLearningRate']), momentum = float(self.config['Network']['AdversaryMomentum']))
 		self.adversary_dropout = float(self.config['Network']['AdversaryDropout'])
- #       self.adversary_loss = binary_crossentropy
+ 		#self.adversary_loss = binary_crossentropy
 
 		self.combined_optimizer = SGD(lr = float(self.config['Network']['CombinedLearningRate']), momentum = float(self.config['Network']['CombinedMomentum']))
 
@@ -132,9 +135,9 @@ class ANN_environment(object):
 
 		self.lambda_value = float(self.config['Training']['LambdaValue'])
 
-#Initializing the data and target samples
-#The split function cuts into a training sample and a test sample
-#Important note: Have to use the same random seed so that event and target stay in the same order as we shuffle
+	#Initializing the data and target samples
+	#The split function cuts into a training sample and a test sample
+	#Important note: Have to use the same random seed so that event and target stay in the same order as we shuffle
 	def initialize_sample(self):
 		#Signal and background are needed for the classification task, signal and systematic for the adversarial part
 		#In this first step the events are retrieved from the tree, using the chosen set of variables
@@ -196,11 +199,13 @@ class ANN_environment(object):
 		self.network_input = Input( shape = (self.input_dimension) )
 		self.layer_discriminator = Dense( self.discriminator_nodes, activation = "elu")(self.network_input)
 		self.layer_discriminator = BatchNormalization()(self.layer_discriminator)
-		self.layer_discriminator = Dropout(0.7)(self.layer_discriminator)
-		for layercount in range(self.discriminator_layers -1):
+		#(experimental) Idea: High dropout in the first layer effectively regularizes variables. Untested.
+		self.layer_discriminator = Dropout(self.discriminator_inputdropout)(self.layer_discriminator)
+		for _ in range(self.discriminator_layers -1):
+			#Placeholder iterator name so pylint doesn't complain
 			self.layer_discriminator = Dense(self.discriminator_nodes, activation = "elu")(self.layer_discriminator)
 			self.layer_discriminator = BatchNormalization()(self.layer_discriminator)
-			self.layer_discriminator = Dropout(0.5)(self.layer_discriminator)
+			self.layer_discriminator = Dropout(self.discriminator_dropout)(self.layer_discriminator)
 		self.layer_discriminator = Dense( 1, activation = "sigmoid")(self.layer_discriminator)
 
 		self.model_discriminator = Model(inputs = [self.network_input], outputs = [self.layer_discriminator])
@@ -221,11 +226,11 @@ class ANN_environment(object):
 		self.layer_adversary = self.model_discriminator(self.network_input)
 		self.layer_adversary = Dense( self.adversary_nodes, activation = 'elu')(self.layer_adversary)
 		self.layer_adversary = BatchNormalization()(self.layer_adversary)
-		self.layer_adversary = Dropout(0.5)(self.layer_adversary)
-		for layercount in range(self.adversary_layers - 1):
+		self.layer_adversary = Dropout(self.adversary_dropout)(self.layer_adversary)
+		for _ in range(self.adversary_layers - 1):
 			self.layer_adversary = Dense(self.adversary_nodes, activation = "elu")(self.layer_adversary)
 			self.layer_adversary = BatchNormalization()(self.layer_adversary)
-			self.layer_adversary = Dropout(0.5)(self.layer_adversary)
+			self.layer_adversary = Dropout(self.adversary_dropout)(self.layer_adversary)
 		self.layer_adversary = Dense( 1, activation = "sigmoid")(self.layer_adversary)
 
 		self.model_adversary = Model(inputs = [self.network_input], outputs = [self.layer_adversary])
@@ -260,25 +265,36 @@ class ANN_environment(object):
 		for iteration in range(self.training_iterations):
 
 			print('Running training: Iteration ' + str(iteration) + ' of ' + str(self.training_iterations))
+			print('Start ', time.time())
 
 			self.save_losses(iteration, self.model_combined, losses_test, losses_train)
 
+			print('SaveLosses ', time.time())
 
 			make_trainable(self.model_discriminator, True)
 			make_trainable(self.model_adversary, False)
 
-			self.model_history = self.model_combined.fit(self.sample_training, [self.target_training, self.target_adversarial], epochs=1, batch_size = 512, sample_weight = [self.weight_training.ravel(),self.weight_adversarial.ravel()], verbose = 2)
+			print('DiscriminatorTrainable ', time.time())
+
+			self.model_history = self.model_combined.fit(self.sample_training, [self.target_training, self.target_adversarial], epochs=1, batch_size = int(self.config['Training']['BatchSize']), sample_weight = [self.weight_training.ravel(),self.weight_adversarial.ravel()], verbose = 2)
 			self.model_history_array.append(self.model_history)
+
+			print('DiscriminatorTrained ', time.time())
+
 			make_trainable(self.model_discriminator, False)
 			make_trainable(self.model_adversary, True)
 
-			self.adversary_history = self.model_adversary.fit(self.sample_training, self.target_adversarial, epochs=1, batch_size = 512, sample_weight = self.weight_training.ravel())
+			print('AdversaryTrainable ', time.time())
+
+			self.adversary_history = self.model_adversary.fit(self.sample_training, self.target_adversarial, epochs=1, batch_size = int(self.config['Training']['BatchSize']), sample_weight = self.weight_training.ravel(), verbose = 2)
 			self.adversary_history_array.append(self.adversary_history)
+
+			print('AdversaryTrained ', time.time())
 
 
 	def pretrain_adversary(self):
 
-		self.model_adversary.fit(self.sample_training, self.target_adversarial.ravel(), epochs = self.adversary_epochs, batch_size =512, sample_weight = self.weight_adversarial.ravel())
+		self.model_adversary.fit(self.sample_training, self.target_adversarial.ravel(), epochs = self.adversary_epochs, batch_size = int(self.config['Training']['BatchSize']), sample_weight = self.weight_adversarial.ravel())
 
 
 
@@ -294,7 +310,7 @@ class ANN_environment(object):
 
 		self.model_discriminator.summary()
 
-		self.discriminator_history = self.model_discriminator.fit(self.sample_training, self.target_training.ravel(), epochs=self.discriminator_epochs, batch_size = 512, sample_weight = self.weight_training.ravel(), validation_data = (self.sample_validation, self.target_validation, self.weight_validation.ravel()))
+		self.discriminator_history = self.model_discriminator.fit(self.sample_training, self.target_training.ravel(), epochs=self.discriminator_epochs, batch_size = int(self.config['Training']['BatchSize']), sample_weight = self.weight_training.ravel(), validation_data = (self.sample_validation, self.target_validation, self.weight_validation.ravel()))
 		self.discriminator_history_array.append(self.discriminator_history)
 		print(self.discriminator_history.history.keys())
 
@@ -496,7 +512,6 @@ print(variableList)
 
 
 #first_training = ANN_environment(variables = variableList)
-print('Don\'t mind me, just training some networks')
 
 first_training = ANN_environment()
 first_training.initialize_sample()

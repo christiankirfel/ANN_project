@@ -6,3 +6,6 @@ output/
 
 # ignore any root files
 *.root
+
+# ignore custom config
+config_whk_ANN.ini
