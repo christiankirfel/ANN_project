@@ -126,7 +126,7 @@ class ANN_environment(object):
 
 		self.validation_fraction = float(self.config['Training']['ValidationFraction'])
 
-		self.batch_size = float(self.config['Training']['BatchSize'])
+		self.batch_size = int(self.config['Training']['BatchSize'])
 
 		#The following set of variables is used to evaluate the result
 		#fpr = false positive rate, tpr = true positive rate
@@ -267,16 +267,21 @@ class ANN_environment(object):
 
 	
 	def run_adversarial_training(self):
+		'''
+		This function runs the actual adversarial training by alternating between training the discriminator and adversary networks
+		'''
 
 		#losses_test = {"L_f": [], "L_r": [], "L_f - L_r": []}
 		#losses_train = {"L_f": [], "L_r": [], "L_f - L_r": []}
 
 		def make_trainable(network, flag):
+			#helper function
 			network.trainable = flag
 			for l in network.layers:
 				l.trainable = flag
 			network.compile
 
+		#run this however many times needed, every iterations is one epoch for each network
 		for iteration in range(self.training_iterations):
 
 
@@ -301,6 +306,9 @@ class ANN_environment(object):
 
 
 	def pretrain_adversary(self):
+		'''
+		Currently unused
+		'''
 
 		self.model_adversary.fit(self.sample_training, self.target_adversarial.ravel(), epochs = self.adversary_epochs, batch_size = int(self.config['Training']['BatchSize']), sample_weight = self.weight_adversarial.ravel())
 
@@ -310,7 +318,9 @@ class ANN_environment(object):
 
 
 	def pretrain_discriminator(self):
-
+		'''
+		This function pretrains the discriminator network, this improves the adversarial training speed greatly
+		'''
 	
 		print('Pretraining discriminator with ' + str(self.discriminator_epochs) + ' epochs.')
 
@@ -378,8 +388,8 @@ class ANN_environment(object):
 		plt.gcf().savefig(output_path + 'losses_' + str(i/5) + '.png')
 		plt.gcf().clear()
 
-#losses_test = {"L_f": [], "L_r": [], "L_f - L_r": []}
-#losses_train = {"L_f": [], "L_r": [], "L_f - L_r": []}
+		#losses_test = {"L_f": [], "L_r": [], "L_f - L_r": []}
+		#losses_train = {"L_f": [], "L_r": [], "L_f - L_r": []}
 
 	#This function is inactive for now
 	def save_losses(self, i, network, lossestest, lossestrain):
@@ -391,13 +401,6 @@ class ANN_environment(object):
 		lossestrain["L_f"].append(l_train[1])
 		lossestrain["L_r"].append(-l_train[2])
 		lossestrain["L_f - L_r"].append(l_train[0])
-		#DEBUG FLOAT ERROR
-#		with open('float_error.txt','a') as f:
-#			print('Next Iteration', file=f)
-#			print('\tl_test: ', l_test, file=f)
-#			print('\tL_f: ', lossestest["L_f"][-1], file=f)
-#			print('\tL_r: ', lossestest['L_r'][-1], file=f)
-#			print('\tL_f-L_r: ', lossestest['L_f - L_r'][-1], file=f)
 		if i % 5 == 0 or i == (self.training_iterations):
 			self.plot_losses(i, lossestest, lossestrain)
 
