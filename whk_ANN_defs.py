@@ -1,8 +1,3 @@
-#To time the code
-import time
-
-timeStart = time.time()
-
 #Loading base packages
 import os
 import math
@@ -74,6 +69,7 @@ class ANN_environment(object):
 
 		#TODO load additional config for HTCondor/BAF
 
+		#Use the config file for everything if possible
 		#A list of more general settings
 		self.variables = np.array(["mass_lep1jet2", "pTsys_lep1lep2met", "pTsys_jet1jet2", "mass_lep1jet1", "deltapT_lep1_jet1", "deltaR_lep1_jet2", "deltaR_lep1lep2_jet2", "mass_lep2jet1", "pT_jet2", "deltaR_lep1_jet1", "deltaR_lep1lep2_jet1jet2met", "deltaR_lep2_jet2", "cent_lep2jet2", "deltaR_lep2_jet1"])
 		#The seed is used to make sure that both the events and the labels are shuffeled the same way because they are not inherently connected.
@@ -130,6 +126,8 @@ class ANN_environment(object):
 
 		self.validation_fraction = float(self.config['Training']['ValidationFraction'])
 
+		self.batch_size = float(self.config['Training']['BatchSize'])
+
 		#The following set of variables is used to evaluate the result
 		#fpr = false positive rate, tpr = true positive rate
 		self.tpr = 0.
@@ -139,8 +137,11 @@ class ANN_environment(object):
 
 		self.lambda_value = float(self.config['Training']['LambdaValue'])
 
-		self.time_list = []
-		self.time_predisc = 0.
+		#self.logger = ""
+		#self.logger.append('Tensorflow ' + os.system("python3 -c 'import tensorflow; print(tf.__version__)'") + '\n')
+		#self.logger.append('Keras ' + keras.__version__ + '\n')
+		#self.logger.append('Batch Size ' + self.config['Training']['BatchSize'] + '\n')
+
 
 	def initialize_sample(self):
 		"""
@@ -194,13 +195,15 @@ class ANN_environment(object):
 		self.sample_training = scaler.fit_transform(self.sample_training)
 		self.sample_validation = scaler.fit_transform(self.sample_validation)      	
 
-#----------------------------------------------------------------------------------------------------------------------------------------
-#Here the discriminator is built
-#It has an input layer fit to the shape of the variables
-#A loop creates the desired amount of deep layers
-#It ends in a single sigmoid layer
-#Additionally the last layer is saved to be an optional input to the adversary
 	def build_discriminator(self):
+		'''---------------------------------------------------------------------------------------------------------------------------------------
+		Here the discriminator is built
+		It has an input layer fit to the shape of the variables
+		A loop creates the desired amount of deep layers
+		It ends in a single sigmoid layer
+		Additionally the last layer is saved to be an optional input to the adversary
+		'''
+
 		#The discriminator aims to separate signal and background
 		#There is an input layer after which the desired amount of hidden layers is added in a loop
 		#In the loop normalisation and dropout are added too
@@ -221,13 +224,15 @@ class ANN_environment(object):
 		self.model_discriminator.compile(loss = "binary_crossentropy", weighted_metrics = [metrics.binary_accuracy], optimizer = self.discriminator_optimizer)
 		self.model_discriminator.summary()
 
-#Here the adversary is built
-#It uses the discriminator output as inputobject has no attribute 'append'
-
-#Optionally the last layer can be used additionally     
-#In a loop the deep layers are created
-#It ends in a single sigmoid layer
 	def build_adversary(self):
+		'''
+		Here the adversary is built
+		It uses the discriminator output as inputobject has no attribute 'append'
+
+		Optionally the last layer can be used additionally     
+		In a loop the deep layers are created
+		It ends in a single sigmoid layer
+		'''
 		#This is where the adversary is initialized
 		#It is just another classifier
 
@@ -247,9 +252,10 @@ class ANN_environment(object):
 		self.model_adversary.summary()
 
 	def build_combined_training(self):
-		#The discriminator and adversary are added up to a single model running on a combined loss function
+		'''The discriminator and adversary are added up to a single model running on a combined loss function'''
 
 		def make_losses_adversary():
+			'''This function creates the loss function used by the adversary'''
 			def losses_adversary(y_true, y_pred):
 				return self.lambda_value * binary_crossentropy(y_true, y_pred)
 			return losses_adversary
@@ -262,8 +268,8 @@ class ANN_environment(object):
 	
 	def run_adversarial_training(self):
 
-		losses_test = {"L_f": [], "L_r": [], "L_f - L_r": []}
-		losses_train = {"L_f": [], "L_r": [], "L_f - L_r": []}
+		#losses_test = {"L_f": [], "L_r": [], "L_f - L_r": []}
+		#losses_train = {"L_f": [], "L_r": [], "L_f - L_r": []}
 
 		def make_trainable(network, flag):
 			network.trainable = flag
@@ -273,13 +279,12 @@ class ANN_environment(object):
 
 		for iteration in range(self.training_iterations):
 
-			time_temp = time.time()
 
 			print('Running training: Iteration ' + str(iteration+1) + ' of ' + str(self.training_iterations))
 
 			#Only save losses every 5 iterations
-			if iteration % 5 == 0 or iteration == (self.training_iterations):
-				self.save_losses(iteration, self.model_combined, losses_test, losses_train)
+			#if iteration % 5 == 0 or iteration == (self.training_iterations):
+			#	self.save_losses(iteration, self.model_combined, losses_test, losses_train)
 
 			make_trainable(self.model_discriminator, True)
 			make_trainable(self.model_adversary, False)
@@ -293,7 +298,6 @@ class ANN_environment(object):
 			self.adversary_history = self.model_adversary.fit(self.sample_training, self.target_adversarial, epochs=1, batch_size = int(self.config['Training']['BatchSize']), sample_weight = self.weight_training.ravel())
 			self.adversary_history_array.append(self.adversary_history)
 
-			self.time_list.append(time.time() - time_temp)
 
 
 	def pretrain_adversary(self):
@@ -307,8 +311,7 @@ class ANN_environment(object):
 
 	def pretrain_discriminator(self):
 
-		time_temp = time.time()
-		
+	
 		print('Pretraining discriminator with ' + str(self.discriminator_epochs) + ' epochs.')
 
 		#print(self.target_training[12:500])
@@ -319,8 +322,6 @@ class ANN_environment(object):
 		self.discriminator_history = self.model_discriminator.fit(self.sample_training, self.target_training.ravel(), epochs=self.discriminator_epochs, batch_size = int(self.config['Training']['BatchSize']), sample_weight = self.weight_training.ravel(), validation_data = (self.sample_validation, self.target_validation, self.weight_validation.ravel()))
 		self.discriminator_history_array.append(self.discriminator_history)
 		print(self.discriminator_history.history.keys())
-
-		self.time_predisc = time.time() - time_temp
 
 		#for training_iteration in range(self.training_iterations):
 		#    discriminator_history = self.model_discriminator.fit(self.sample_training, self.target_training, epochs=self.discriminator_epochs, validation_data = (self.sample_validation, self.target_validation))
@@ -380,9 +381,10 @@ class ANN_environment(object):
 #losses_test = {"L_f": [], "L_r": [], "L_f - L_r": []}
 #losses_train = {"L_f": [], "L_r": [], "L_f - L_r": []}
 
+	#This function is inactive for now
 	def save_losses(self, i, network, lossestest, lossestrain):
-		l_test = network.evaluate(self.sample_training, [self.target_training, self.target_adversarial], batch_size = int(self.config['Training'] ['BatchSize']))
-		l_train = network.evaluate(self.sample_validation, [self.target_validation, self.target_adversarial_validation], batch_size = int(self.config['Training'] ['BatchSize']))
+		l_test = network.evaluate(self.sample_training, [self.target_training, self.target_adversarial], batch_size = int(self.config['Training']['BatchSize']))
+		l_train = network.evaluate(self.sample_validation, [self.target_validation, self.target_adversarial_validation], batch_size = int(self.config['Training']['BatchSize']))
 		lossestest["L_f"].append(l_test[1])
 		lossestest["L_r"].append(-l_test[2])
 		lossestest["L_f - L_r"].append(l_test[0])
@@ -495,49 +497,6 @@ class ANN_environment(object):
 		plt.gcf().savefig(output_path + 'acc.png')
 		plt.gcf().clear()
 
-	def get_speed(self):
-		with open('whk_Benchmark.txt','w') as f:
-			#f.write('Tensorflow ', tensorflow.__version__, '\n')
-			f.write('Keras ', keras.__version__, '\n')
-			f.write('Batch size: ', self.config['Training']['BatchSize'], '\n')
-			f.write('Discriminator epochs: ', self.config['Training']['DiscriminatorEpochs'], '\n')
-			f.write('Iterations: ', self.config['Training']['TrainingIterations'], '\n')
-			f.write('Time for Discriminator pretrain: %.3f\n' % (self.time_predisc))
-			f.write('Time for all Iterations: %.3f\n' % (sum(self.time_list)))
-			f.write('Average time per Epoch: %.3f\n' % (sum(self.time_list)/len(self.time_list)))
-
-#In the following options and variables are read in
-#This is done to keep the most important features clearly represented
-
-#with open('/cephfs/user/s6chkirf/whk_ANN_variables.txt','r') as varfile:
-with open('whk_ANN_variables.txt','r') as varfile:
-	variableList = varfile.read().splitlines() 
-
-print(variableList)
-
-
-#first_training = ANN_environment(variables = variableList)
-
-first_training = ANN_environment()
-first_training.initialize_sample()
-first_training.build_discriminator()
-first_training.build_adversary()
-first_training.build_combined_training()
-first_training.pretrain_discriminator()
-#first_training.predict_model()
-first_training.run_adversarial_training()
-first_training.predict_model()
-first_training.plot_roc()
-first_training.plot_separation()
-first_training.plot_separation_adversary()
-#first_trainings.plot_separation_adversary()
-#first_training.plot_losses()
-first_training.get_speed()
-
-timeTotal = time.time() - timeStart
-tmins, tsecs = divmod(timeTotal, 60)
-thours, tmins = divmod(tmins, 60)
-
-print('Total time was %.3f seconds. (%f:%2f:%2f)' % ((time.time() - timeStart), thours, tmins, tsecs))
-with open('whk_Benchmark.txt','a') as f:
-	f.write('Total time was %.3f seconds. (%f:%2f:%2f)' % ((time.time() - timeStart), thours, tmins, tsecs))
+#	def write_log(self):
+#		with open('whk_log.txt','w') as f:
+#			f.write(self.logger)

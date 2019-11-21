@@ -9,3 +9,7 @@ output/
 
 # ignore custom config
 config_whk_ANN.ini
+
+# ignore logs
+*log*.txt
+*.log
