@@ -56,30 +56,39 @@ plt.ticklabel_format(style='sci', axis='y', scilimits=(0,0))
 #This is the main class for the adversarial neural network setup
 class ANN_environment(object):
 
-	def __init__(self):
+	def __init__(self,args):
 		""" opens files, loads config and initializes variables """
 		#load the config
 		self.config_path = "config_whk_ANN.ini"
-		self.config = cfg.ConfigParser()
+		self.config = cfg.ConfigParser(inline_comment_prefixes="#")
 		try:
 			self.config.read(self.config_path)
 		except:
 			print('[WARNING] No config file found. Using defaults')
 			self.config.read("default_whk_ANN.ini")
+		print(self.config)
+		self.config = self.config['General']
 
 		#TODO load additional config for HTCondor/BAF
+		if len(args) > 1:
+			if len(args) % 2 == 1:
+				for x in range(1,len(args),2):
+					if self.config.get(str(args[x]))==None:
+						print('[ERROR] Unknown key ' + str(args[x]))
+					self.config[str(args[x])] = str(args[x+1])
+					print('Custom config: ' + str(args[x]) + '=' + str(args[x+1]))
 
 		#Use the config file for everything if possible
 		#A list of more general settings
 		self.variables = np.array(["mass_lep1jet2", "pTsys_lep1lep2met", "pTsys_jet1jet2", "mass_lep1jet1", "deltapT_lep1_jet1", "deltaR_lep1_jet2", "deltaR_lep1lep2_jet2", "mass_lep2jet1", "pT_jet2", "deltaR_lep1_jet1", "deltaR_lep1lep2_jet1jet2met", "deltaR_lep2_jet2", "cent_lep2jet2", "deltaR_lep2_jet1"])
 		#The seed is used to make sure that both the events and the labels are shuffeled the same way because they are not inherently connected.
-		self.seed = int(self.config['General']['Seed'])
+		self.seed = int(self.config['Seed'])
 		#All information necessary for the input
 		#The exact data and targets are set late
-		self.input_path = self.config['General']['InputPath']
-		self.signal_sample = self.config['General']['SignalSample']
-		self.background_sample = self.config['General']['BackgroundSample']
-		self.systematics_sample = self.config['General']['SystematicsSample']
+		self.input_path = self.config['InputPath']
+		self.signal_sample = self.config['SignalSample']
+		self.background_sample = self.config['BackgroundSample']
+		self.systematics_sample = self.config['SystematicsSample']
 		self.signal_tree = ur.open(self.input_path)[self.signal_sample]
 		self.background_tree = ur.open(self.input_path)[self.background_sample]
 		self.systematic_tree = ur.open(self.input_path)[self.systematics_sample]
@@ -102,31 +111,31 @@ class ANN_environment(object):
 		#All information for the length of the training. Beware that epochs might only come into the pretraining
 		#Iterations are used for the adversarial part of the training
 		#original: 10 10 1000
-		self.discriminator_epochs = int(self.config['Training']['DiscriminatorEpochs'])
-		self.adversary_epochs = int(self.config['Training']['AdversaryEpochs'])
-		self.training_iterations = int(self.config['Training']['TrainingIterations'])
+		self.discriminator_epochs = int(self.config['DiscriminatorEpochs'])
+		self.adversary_epochs = int(self.config['AdversaryEpochs'])
+		self.training_iterations = int(self.config['TrainingIterations'])
 		#Setup of the networks, nodes and layers
-		self.discriminator_layers = int(self.config['Network']['DiscriminatorLayers'])
-		self.discriminator_nodes = int(self.config['Network']['DiscriminatorNodes'])
-		self.adversary_layers = int(self.config['Network']['AdversaryLayers'])
-		self.adversary_nodes = int(self.config['Network']['AdversaryNodes'])
+		self.discriminator_layers = int(self.config['DiscriminatorLayers'])
+		self.discriminator_nodes = int(self.config['DiscriminatorNodes'])
+		self.adversary_layers = int(self.config['AdversaryLayers'])
+		self.adversary_nodes = int(self.config['AdversaryNodes'])
 		#Setup of the networks, loss and optimisation
 		#original lr/momentum sys.argv 123456
 		#0.01 0.001 0.01 0.3 0.3 0.3 0.5
-		self.discriminator_optimizer = SGD(lr = float(self.config['Network']['DiscriminatorLearningRate']), momentum = float(self.config['Network']['DiscriminatorMomentum']))
-		self.discriminator_dropout = float(self.config['Network']['DiscriminatorDropout'])
-		self.discriminator_inputdropout = float(self.config['Network']['DiscriminatorInputDropout'])
+		self.discriminator_optimizer = SGD(lr = float(self.config['DiscriminatorLearningRate']), momentum = float(self.config['DiscriminatorMomentum']))
+		self.discriminator_dropout = float(self.config['DiscriminatorDropout'])
+		self.discriminator_inputdropout = float(self.config['DiscriminatorInputDropout'])
  		#self.discriminator_loss = binary_crossentropy
 
-		self.adversary_optimizer = SGD(lr = float(self.config['Network']['AdversaryLearningRate']), momentum = float(self.config['Network']['AdversaryMomentum']))
-		self.adversary_dropout = float(self.config['Network']['AdversaryDropout'])
+		self.adversary_optimizer = SGD(lr = float(self.config['AdversaryLearningRate']), momentum = float(self.config['AdversaryMomentum']))
+		self.adversary_dropout = float(self.config['AdversaryDropout'])
  		#self.adversary_loss = binary_crossentropy
 
-		self.combined_optimizer = SGD(lr = float(self.config['Network']['CombinedLearningRate']), momentum = float(self.config['Network']['CombinedMomentum']))
+		self.combined_optimizer = SGD(lr = float(self.config['CombinedLearningRate']), momentum = float(self.config['CombinedMomentum']))
 
-		self.validation_fraction = float(self.config['Training']['ValidationFraction'])
+		self.validation_fraction = float(self.config['ValidationFraction'])
 
-		self.batch_size = int(self.config['Training']['BatchSize'])
+		self.batch_size = int(self.config['BatchSize'])
 
 		#The following set of variables is used to evaluate the result
 		#fpr = false positive rate, tpr = true positive rate
@@ -135,12 +144,12 @@ class ANN_environment(object):
 		self.threshold = 0.
 		self.auc = 0.
 
-		self.lambda_value = float(self.config['Training']['LambdaValue'])
+		self.lambda_value = float(self.config['LambdaValue'])
 
 		#self.logger = ""
 		#self.logger.append('Tensorflow ' + os.system("python3 -c 'import tensorflow; print(tf.__version__)'") + '\n')
 		#self.logger.append('Keras ' + keras.__version__ + '\n')
-		#self.logger.append('Batch Size ' + self.config['Training']['BatchSize'] + '\n')
+		#self.logger.append('Batch Size ' + self.config['BatchSize'] + '\n')
 
 
 	def initialize_sample(self):
@@ -294,13 +303,13 @@ class ANN_environment(object):
 			make_trainable(self.model_discriminator, True)
 			make_trainable(self.model_adversary, False)
 
-			self.model_history = self.model_combined.fit(self.sample_training, [self.target_training, self.target_adversarial], epochs=1, batch_size = int(self.config['Training']['BatchSize']), sample_weight = [self.weight_training.ravel(),self.weight_adversarial.ravel()])
+			self.model_history = self.model_combined.fit(self.sample_training, [self.target_training, self.target_adversarial], epochs=1, batch_size = int(self.config['BatchSize']), sample_weight = [self.weight_training.ravel(),self.weight_adversarial.ravel()])
 			self.model_history_array.append(self.model_history)
 
 			make_trainable(self.model_discriminator, False)
 			make_trainable(self.model_adversary, True)
 
-			self.adversary_history = self.model_adversary.fit(self.sample_training, self.target_adversarial, epochs=1, batch_size = int(self.config['Training']['BatchSize']), sample_weight = self.weight_training.ravel())
+			self.adversary_history = self.model_adversary.fit(self.sample_training, self.target_adversarial, epochs=1, batch_size = int(self.config['BatchSize']), sample_weight = self.weight_training.ravel())
 			self.adversary_history_array.append(self.adversary_history)
 
 
@@ -310,7 +319,7 @@ class ANN_environment(object):
 		Currently unused
 		'''
 
-		self.model_adversary.fit(self.sample_training, self.target_adversarial.ravel(), epochs = self.adversary_epochs, batch_size = int(self.config['Training']['BatchSize']), sample_weight = self.weight_adversarial.ravel())
+		self.model_adversary.fit(self.sample_training, self.target_adversarial.ravel(), epochs = self.adversary_epochs, batch_size = int(self.config['BatchSize']), sample_weight = self.weight_adversarial.ravel())
 
 
 
@@ -329,7 +338,7 @@ class ANN_environment(object):
 
 		self.model_discriminator.summary()
 
-		self.discriminator_history = self.model_discriminator.fit(self.sample_training, self.target_training.ravel(), epochs=self.discriminator_epochs, batch_size = int(self.config['Training']['BatchSize']), sample_weight = self.weight_training.ravel(), validation_data = (self.sample_validation, self.target_validation, self.weight_validation.ravel()))
+		self.discriminator_history = self.model_discriminator.fit(self.sample_training, self.target_training.ravel(), epochs=self.discriminator_epochs, batch_size = int(self.config['BatchSize']), sample_weight = self.weight_training.ravel(), validation_data = (self.sample_validation, self.target_validation, self.weight_validation.ravel()))
 		self.discriminator_history_array.append(self.discriminator_history)
 		print(self.discriminator_history.history.keys())
 
@@ -393,8 +402,8 @@ class ANN_environment(object):
 
 	#This function is inactive for now
 	def save_losses(self, i, network, lossestest, lossestrain):
-		l_test = network.evaluate(self.sample_training, [self.target_training, self.target_adversarial], batch_size = int(self.config['Training']['BatchSize']))
-		l_train = network.evaluate(self.sample_validation, [self.target_validation, self.target_adversarial_validation], batch_size = int(self.config['Training']['BatchSize']))
+		l_test = network.evaluate(self.sample_training, [self.target_training, self.target_adversarial], batch_size = int(self.config['BatchSize']))
+		l_train = network.evaluate(self.sample_validation, [self.target_validation, self.target_adversarial_validation], batch_size = int(self.config['BatchSize']))
 		lossestest["L_f"].append(l_test[1])
 		lossestest["L_r"].append(-l_test[2])
 		lossestest["L_f - L_r"].append(l_test[0])

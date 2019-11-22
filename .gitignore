@@ -1,9 +1,11 @@
 # ignore output
 output/
+*.png
+*.pdf
 
 # ignore VSC files
 .vscode/
-
+__pycache__
 # ignore any root files
 *.root
 
@@ -13,3 +15,4 @@ config_whk_ANN.ini
 # ignore logs
 *log*.txt
 *.log
+

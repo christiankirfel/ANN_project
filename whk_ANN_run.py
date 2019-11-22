@@ -3,6 +3,7 @@ import time
 
 timeStart = time.time()
 
+import sys
 import whk_ANN_defs
 
 #In the following options and variables are read in
@@ -14,10 +15,10 @@ with open('whk_ANN_variables.txt','r') as varfile:
 
 print(variableList)
 
-
+#args = sys.argv
 #first_training = ANN_environment(variables = variableList)
 
-first_training = whk_ANN_defs.ANN_environment()
+first_training = whk_ANN_defs.ANN_environment(sys.argv)
 first_training.initialize_sample()
 first_training.build_discriminator()
 first_training.build_adversary()
@@ -28,7 +29,7 @@ first_training.pretrain_discriminator()
 time1 = time.time()
 first_training.run_adversarial_training()
 time1 = time.time() - time1
-with open("batchsize.log",'a') as f:
+with open("batchsize_CPU.log",'a') as f:
     print(str(first_training.batch_size), " %.3f\n" % (time1), file=f)
 #first_training.predict_model()
 #first_training.plot_roc()
