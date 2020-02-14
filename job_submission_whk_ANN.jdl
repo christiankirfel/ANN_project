@@ -6,7 +6,7 @@
 # Path to executable
 Executable              = job-wrapper_whk_ANN.sh
 # Job process number is given as argument to executable
-Arguments               = "$(lr_discriminator) $(lr_adversary) $(lr_combined) $(mom_discriminator) $(mom_adversary) $(mom_combined) $(ttbar_weight)"
+Arguments               = 
 #$(Process) $(Variable) 
 # Use HTCondor's vanilla universe (see http://research.cs.wisc.edu/htcondor/manual/current/2_4Running_Job.html)
 Universe                = vanilla
@@ -20,16 +20,16 @@ Transfer_input_files    =
 Transfer_output_files   = 
 
 # Specify job input and output
-Error                   = log_whk_ANN/err/err.$(ClusterId).$(Process).$(lr_discriminator).$(lr_adversary).$(lr_combined).$(mom_discriminator).$(mom_adversary).$(mom_combined) 
+Error                   = log_whk_ANN/err/err.test_run 
 Input                   =                                                
-Output                  = log_whk_ANN/out/out.$(ClusterId).$(Process).$(lr_discriminator).$(lr_adversary).$(lr_combined).$(mom_discriminator).$(mom_adversary).$(mom_combined)                                                
-Log                     = log_whk_ANN/log/log.$(ClusterId).$(Process).$(lr_discriminator).$(lr_adversary).$(lr_combined).$(mom_discriminator).$(mom_adversary).$(mom_combined)
+Output                  = log_whk_ANN/out/out.test_run                                                
+Log                     = log_whk_ANN/log/log.test_run
 batch_name = "whk_ANN"
 
 # Request resources to the best of your knowledge
 # (check log file after job completion to compare requested and used resources)
 # Memory in MiB, if no unit is specified!
-Request_memory          = 12 GB
+Request_memory          = 8 GB
 Request_cpus            = 8
 # Disk space in kiB, if no unit is specified!
 Request_disk            = 5 GB
@@ -38,8 +38,8 @@ Request_disk            = 5 GB
 # Choose OS (options: "SL6", "CentOS7", "Ubuntu1604")
 +ContainerOS            = "CentOS7"
 
-
-queue lr_discriminator, lr_adversary, lr_combined, mom_discriminator, mom_adversary, mom_combined, ttbar_weight from (
+queue
+#queue lr_discriminator, lr_adversary, lr_combined, mom_discriminator, mom_adversary, mom_combined, ttbar_weight from (
 #    0.001 0.01 0.01 0.3 0.3 0.3 0.0
 #    0.03 0.01 0.01 0.3 0.3 0.3 0.0
 #    0.07 0.01 0.01 0.3 0.3 0.3 0.0
@@ -53,32 +53,32 @@ queue lr_discriminator, lr_adversary, lr_combined, mom_discriminator, mom_advers
 #    0.03 0.01 0.01 0.8 0.8 0.3 0.0
 #    0.07 0.01 0.01 0.8 0.3 0.8 0.0
 #Standard Run
-    0.01 0.01 0.01 0.3 0.3 0.3 0.0
+#    0.01 0.01 0.01 0.3 0.3 0.3 0.0
 #Weight runs
-    0.01 0.01 0.01 0.3 0.3 0.3 0.0
-    0.01 0.01 0.01 0.3 0.3 0.3 0.2
-    0.01 0.01 0.01 0.3 0.3 0.3 0.4
-    0.01 0.01 0.01 0.3 0.3 0.3 0.6
-    0.01 0.01 0.01 0.3 0.3 0.3 0.8
-    0.01 0.01 0.01 0.3 0.3 0.3 1.0
+#    0.01 0.01 0.01 0.3 0.3 0.3 0.0
+#    0.01 0.01 0.01 0.3 0.3 0.3 0.2
+#    0.01 0.01 0.01 0.3 0.3 0.3 0.4
+#    0.01 0.01 0.01 0.3 0.3 0.3 0.6
+#    0.01 0.01 0.01 0.3 0.3 0.3 0.8
+#    0.01 0.01 0.01 0.3 0.3 0.3 1.0
 #Combine mom and weight    
-    0.01 0.01 0.01 0.6 0.3 0.3 0.0
-    0.01 0.01 0.01 0.3 0.6 0.3 0.0
-    0.01 0.01 0.01 0.3 0.3 0.6 0.0
-    0.01 0.01 0.01 0.6 0.3 0.3 0.5
-    0.01 0.01 0.01 0.3 0.6 0.3 0.5
-    0.01 0.01 0.01 0.3 0.3 0.6 0.5
-    0.01 0.01 0.01 0.6 0.3 0.3 1.0
-    0.01 0.01 0.01 0.3 0.6 0.3 1.0
-    0.01 0.01 0.01 0.3 0.3 0.6 1.0
+#    0.01 0.01 0.01 0.6 0.3 0.3 0.0
+#    0.01 0.01 0.01 0.3 0.6 0.3 0.0
+#    0.01 0.01 0.01 0.3 0.3 0.6 0.0
+#    0.01 0.01 0.01 0.6 0.3 0.3 0.5
+#    0.01 0.01 0.01 0.3 0.6 0.3 0.5
+#    0.01 0.01 0.01 0.3 0.3 0.6 0.5
+#    0.01 0.01 0.01 0.6 0.3 0.3 1.0
+#    0.01 0.01 0.01 0.3 0.6 0.3 1.0
+#    0.01 0.01 0.01 0.3 0.3 0.6 1.0
 #Combine lr and weight    
-    0.001 0.01 0.01 0.3 0.3 0.3 0.0
-    0.01 0.001 0.01 0.3 0.3 0.3 0.0
-    0.01 0.01 0.001 0.3 0.3 0.3 0.0
-    0.001 0.01 0.01 0.3 0.3 0.3 0.5
-    0.01 0.001 0.01 0.3 0.3 0.3 0.5
-    0.01 0.01 0.001 0.3 0.3 0.3 0.5
-    0.001 0.01 0.01 0.3 0.3 0.3 1.0
-    0.01 0.001 0.01 0.3 0.3 0.3 1.0
-    0.01 0.01 0.001 0.3 0.3 0.3 1.0
-)
+#    0.001 0.01 0.01 0.3 0.3 0.3 0.0
+#    0.01 0.001 0.01 0.3 0.3 0.3 0.0
+#    0.01 0.01 0.001 0.3 0.3 0.3 0.0
+#    0.001 0.01 0.01 0.3 0.3 0.3 0.5
+#    0.01 0.001 0.01 0.3 0.3 0.3 0.5
+#    0.01 0.01 0.001 0.3 0.3 0.3 0.5
+#    0.001 0.01 0.01 0.3 0.3 0.3 1.0
+#    0.01 0.001 0.01 0.3 0.3 0.3 1.0
+#    0.01 0.01 0.001 0.3 0.3 0.3 1.0
+#)

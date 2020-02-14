@@ -21,7 +21,9 @@ export MKL_NUM_THREADS=8
 export OMP_NUM_THREADS=8
 
 cd /jwd
-module load anaconda/5.3.0-py37
-source activate /cephfs/user/s6chkirf/whk_env/
-
-python /cephfs/user/s6chkirf/whk_ANN_defs.py ${1} ${2} ${3} ${4} ${5} ${6} ${7}
+module load anaconda/2019.10-py37
+tar xf ${BUDDY}/tf2_env.tar.gz
+source activate /jwd/tf2_env
+tar xf ${BUDDY}/whk_ANN_code.tar.gz
+cd whk_ANN_code
+python whk_ANN_run.py

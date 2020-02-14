@@ -80,7 +80,8 @@ class ANN_environment(object):
 
 		#Use the config file for everything if possible
 		#A list of more general settings
-		self.variables = np.array(["mass_lep1jet2", "pTsys_lep1lep2met", "pTsys_jet1jet2", "mass_lep1jet1", "deltapT_lep1_jet1", "deltaR_lep1_jet2", "deltaR_lep1lep2_jet2", "mass_lep2jet1", "pT_jet2", "deltaR_lep1_jet1", "deltaR_lep1lep2_jet1jet2met", "deltaR_lep2_jet2", "cent_lep2jet2", "deltaR_lep2_jet1"])
+		with open("variables.txt","r") as f:
+			self.variables = np.asarray([line.strip() for line in f])
 		#The seed is used to make sure that both the events and the labels are shuffeled the same way because they are not inherently connected.
 		self.seed = int(self.config['Seed'])
 		#All information necessary for the input
