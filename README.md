@@ -1,26 +1,11 @@
-maybe this will be filled with useful information at some point in the future
+change config stuff in config\_whk\_ANN.ini
 
+run training using whk\_ANN\_run.py
 
 Changelog
 
-**19-11-21**
-- moved run code out of the class file
-- removed timing stuff again
-
 **19-11-20**
-- Added a default config file
 - Added batch size option to network.evaluate
-- Some timing stuff
-
-**19-11-19**
-- Added placeholder README
-- added batch size to config
-- Very minor changes to readability of imports
-
-**19-11-14**
-- Refactored spaces to tabs
-- Config fully works now
-- fixed strange code that used to be a workaround but broke on Tensorflow 2
 
 **19-11-08**
 - Created new branch for further work
