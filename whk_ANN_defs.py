@@ -89,10 +89,14 @@ class ANN_environment(object):
 		self.input_path = self.config['InputPath']
 		self.signal_sample = self.config['SignalSample']
 		self.background_sample = self.config['BackgroundSample']
-		self.systematics_sample = self.config['SystematicsSample']
+		self.signal_systematics_sample = self.config['SignalSystematicsSample']
+		self.background_systematics_sample = self.config['BackgroundSystematicsSample']
+
 		self.signal_tree = ur.open(self.input_path)[self.signal_sample]
 		self.background_tree = ur.open(self.input_path)[self.background_sample]
-		self.systematic_tree = ur.open(self.input_path)[self.systematics_sample]
+		self.signal_systematics_tree = ur.open(self.input_path)[self.signal_systematics_sample]
+		self.background_systematics_tree = ur.open(self.input_path)[self.background_systematics_sample]
+
 		self.sample_training = None
 		self.sample_validation = None
 		self.adversarial_training = None
@@ -100,6 +104,7 @@ class ANN_environment(object):
 		self.target_training = None
 		self.target_validation = None
 		self.target_systematic = None
+
 		#Dimension of the variable input used to define the size of the first layer
 		self.input_dimension = self.variables.shape
 		#These arrays are used to save loss and accuracy of the two networks
@@ -161,49 +166,67 @@ class ANN_environment(object):
 		"""
 		#Signal and background are needed for the classification task, signal and systematic for the adversarial part
 		#In this first step the events are retrieved from the tree, using the chosen set of variables
+
 		#The numpy conversion is redundant
-		self.events_signal = self.signal_tree.pandas.df(self.variables).to_numpy()
-		self.events_background = self.background_tree.pandas.df(self.variables).to_numpy()
-		self.events_systematic = self.systematic_tree.pandas.df(self.variables).to_numpy()
+		self.events_signal = self.signal_tree.pandas.df(self.variables)#.to_numpy()
+		self.events_background = self.background_tree.pandas.df(self.variables)#.to_numpy()
+		self.events_systematic = self.signal_systematics_tree.pandas.df(self.variables)#.to_numpy()
+		self.events_bkg_systematic = self.background_systematics_tree.pandas.df(self.variables)#bkgsys
+
 		#Setting up the weights. The weights for each tree are stored in 'weight_nominal'
-		self.weight_signal = self.signal_tree.pandas.df('weight_nominal').to_numpy()
-		self.weight_background = self.background_tree.pandas.df('weight_nominal').to_numpy()
-		self.weight_systematic = self.systematic_tree.pandas.df('weight_nominal').to_numpy()
+		self.weight_signal = self.signal_tree.pandas.df('weight_nominal')#.to_numpy()
+		self.weight_background = self.background_tree.pandas.df('weight_nominal')#.to_numpy()
+		self.weight_systematic = self.signal_systematics_tree.pandas.df('weight_nominal')#.to_numpy()
+		self.weight_bkg_systematic = self.background_systematics_tree.pandas.df('weight_nominal')#bkgsys
+
 		#Rehsaping the weights
 		self.weight_signal = np.reshape(self.weight_signal, (len(self.events_signal), 1))
 		self.weight_background = np.reshape(self.weight_background, (len(self.events_background), 1))
-		#original: sys.argv[7]
-		self.weight_background_adversarial = self.weight_background * 0.5
+		self.weight_background_adversarial = self.weight_background #maybe scale this in the future?
 		self.weight_systematic = np.reshape(self.weight_systematic, (len(self.events_systematic), 1))
+		self.weight_bkg_systematic = np.reshape(self.weight_bkg_systematic, (len(self.events_bkg_systematic), 1))#bkgsys
+
 		#Normalisation to the eventcount can be used instead of weights, especially if using data
 		self.norm_signal = np.reshape([1./float(len(self.events_signal)) for x in range(len(self.events_signal))], (len(self.events_signal), 1))
 		self.norm_background = np.reshape([1./float(len(self.events_background)) for x in range(len(self.events_background))], (len(self.events_background), 1))
+
 		#Calculating the weight ratio to scale the signal weight up. This tries to take the high amount of background into account
-		self.weight_ratio = ( self.weight_signal.sum() + self.weight_systematic.sum() )/ self.weight_background.sum()
+		self.weight_ratio = ( self.weight_signal.sum() + self.weight_systematic.sum() )/ (self.weight_background.sum() + self.weight_background_adversarial.sum())#bkgsys
 		self.weight_signal = self.weight_signal / self.weight_ratio
 		self.weight_systematic = self.weight_systematic / self.weight_ratio
+
 
 		#Setting up the targets
 		#target combined is used to make sure the systematics are seen as signal for the first net in the combined training
 		self.target_signal = np.reshape([1 for x in range(len(self.events_signal))], (len(self.events_signal), 1))
 		self.target_background = np.reshape([0 for x in range(len(self.events_background))], (len(self.events_background), 1))
 		self.target_systematic = np.reshape([1 for x in range( len( self.events_systematic))], (len(self.events_systematic), 1))
+		self.target_bkg_systematic = np.reshape([0 for x in range(len(self.events_bkg_systematic))], (len(self.events_bkg_systematic), 1))#bkgsys
 		self.target_systematic_adversarial = np.reshape([0 for x in range( len( self.events_systematic))], (len(self.events_systematic), 1))
-		self.target_background_adversarial = np.reshape( np.random.randint(2, size =len( self.events_background)), ((len(self.events_background)), 1))
+		self.target_background_adversarial = np.reshape([0 for x in range(len(self.events_bkg_systematic))], (len(self.events_bkg_systematic),1))#bkgsys
+
 		#The samples and corresponding targets are now split into a sample for training and a sample for testing. Keep in mind that the same random seed should be used for both splits
-		self.sample_training, self.sample_validation = train_test_split(np.concatenate((self.events_signal, self.events_background, self.events_systematic)), test_size = self.validation_fraction, random_state = self.seed)
-		self.target_training, self.target_validation = train_test_split(np.concatenate((self.target_signal, self.target_background, self.target_systematic)), test_size = self.validation_fraction, random_state = self.seed)
+		self.sample_training, self.sample_validation = train_test_split(np.concatenate((self.events_signal, self.events_background, self.events_systematic, self.events_bkg_systematic)), test_size = self.validation_fraction, random_state = self.seed)
+		self.target_training, self.target_validation = train_test_split(np.concatenate((self.target_signal, self.target_background, self.target_systematic, self.target_bkg_systematic)), test_size = self.validation_fraction, random_state = self.seed)
 		self.target_adversarial, self.target_adversarial_validation = train_test_split(np.concatenate((self.target_signal, self.target_background_adversarial, self.target_systematic_adversarial)), test_size = self.validation_fraction, random_state = self.seed)
 		#Splitting the weights
-		self.weight_training, self.weight_validation = train_test_split(np.concatenate((self.weight_signal, self.weight_systematic, self.weight_background)), test_size = self.validation_fraction, random_state = self.seed)
-		self.weight_adversarial, self.weight_adversarial_validation = train_test_split(np.concatenate((self.weight_signal, self.weight_systematic, self.weight_background_adversarial)), test_size = self.validation_fraction, random_state = self.seed)
+		self.weight_training, self.weight_validation = train_test_split(np.concatenate((self.weight_signal, self.weight_systematic, self.weight_background, self.weight_bkg_systematic)), test_size = self.validation_fraction, random_state = self.seed)
+		self.weight_adversarial, self.weight_adversarial_validation = train_test_split(np.concatenate((self.weight_signal, self.weight_systematic, self.weight_background_adversarial, self.weight_bkg_systematic)), test_size = self.validation_fraction, random_state = self.seed)
 		self.norm_training, self.norm_validation = train_test_split(np.concatenate((self.norm_signal, self.norm_background)), test_size = self.validation_fraction, random_state = self.seed)
 
 		#Setting up a scaler
 		#A scaler makes sure that all variables are normalised to 1 and have the same order of magnitude for that reason
 		scaler = StandardScaler()
 		self.sample_training = scaler.fit_transform(self.sample_training)
-		self.sample_validation = scaler.fit_transform(self.sample_validation)      	
+		self.sample_validation = scaler.fit_transform(self.sample_validation) 
+
+		print('sample_training: ' + str(self.sample_training.shape))
+		print('target_training: ' + str(self.target_training.shape))
+		print('target_adversarial: ' + str(self.target_adversarial.shape))
+		print('weight_training: ' + str(self.weight_training.shape))
+		print('weight_adversarial: ' + str(self.weight_adversarial.shape))
+
+		sys.exit(0)
 
 	def build_discriminator(self):
 		'''---------------------------------------------------------------------------------------------------------------------------------------
