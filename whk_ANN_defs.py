@@ -203,12 +203,13 @@ class ANN_environment(object):
 		self.target_systematic = np.reshape([1 for x in range( len( self.events_systematic))], (len(self.events_systematic), 1))
 		self.target_bkg_systematic = np.reshape([0 for x in range(len(self.events_bkg_systematic))], (len(self.events_bkg_systematic), 1))#bkgsys
 		self.target_systematic_adversarial = np.reshape([0 for x in range( len( self.events_systematic))], (len(self.events_systematic), 1))
-		self.target_background_adversarial = np.reshape([0 for x in range(len(self.events_bkg_systematic))], (len(self.events_bkg_systematic),1))#bkgsys
+		self.target_background_adversarial = np.reshape( np.random.randint(2, size =len( self.events_background)), ((len(self.events_background)), 1))#bkgsys
+		self.target_bkg_systematic_adversarial = np.reshape([0 for x in range(len(self.events_bkg_systematic))], (len(self.events_bkg_systematic), 1))
 
 		#The samples and corresponding targets are now split into a sample for training and a sample for testing. Keep in mind that the same random seed should be used for both splits
 		self.sample_training, self.sample_validation = train_test_split(np.concatenate((self.events_signal, self.events_background, self.events_systematic, self.events_bkg_systematic)), test_size = self.validation_fraction, random_state = self.seed)
 		self.target_training, self.target_validation = train_test_split(np.concatenate((self.target_signal, self.target_background, self.target_systematic, self.target_bkg_systematic)), test_size = self.validation_fraction, random_state = self.seed)
-		self.target_adversarial, self.target_adversarial_validation = train_test_split(np.concatenate((self.target_signal, self.target_background_adversarial, self.target_systematic_adversarial)), test_size = self.validation_fraction, random_state = self.seed)
+		self.target_adversarial, self.target_adversarial_validation = train_test_split(np.concatenate((self.target_signal, self.target_background_adversarial, self.target_systematic_adversarial, self.target_bkg_systematic)), test_size = self.validation_fraction, random_state = self.seed)
 		#Splitting the weights
 		self.weight_training, self.weight_validation = train_test_split(np.concatenate((self.weight_signal, self.weight_systematic, self.weight_background, self.weight_bkg_systematic)), test_size = self.validation_fraction, random_state = self.seed)
 		self.weight_adversarial, self.weight_adversarial_validation = train_test_split(np.concatenate((self.weight_signal, self.weight_systematic, self.weight_background_adversarial, self.weight_bkg_systematic)), test_size = self.validation_fraction, random_state = self.seed)
@@ -218,15 +219,7 @@ class ANN_environment(object):
 		#A scaler makes sure that all variables are normalised to 1 and have the same order of magnitude for that reason
 		scaler = StandardScaler()
 		self.sample_training = scaler.fit_transform(self.sample_training)
-		self.sample_validation = scaler.fit_transform(self.sample_validation) 
-
-		print('sample_training: ' + str(self.sample_training.shape))
-		print('target_training: ' + str(self.target_training.shape))
-		print('target_adversarial: ' + str(self.target_adversarial.shape))
-		print('weight_training: ' + str(self.weight_training.shape))
-		print('weight_adversarial: ' + str(self.weight_adversarial.shape))
-
-		sys.exit(0)
+		self.sample_validation = scaler.fit_transform(self.sample_validation)
 
 	def build_discriminator(self):
 		'''---------------------------------------------------------------------------------------------------------------------------------------

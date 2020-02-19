@@ -9,9 +9,6 @@ __pycache__
 # ignore any root files
 *.root
 
-# ignore custom config
-config_whk_ANN.ini
-
 # ignore logs
 *log*.txt
 *.log
