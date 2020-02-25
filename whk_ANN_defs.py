@@ -5,12 +5,12 @@ import sys
 import configparser as cfg
 
 #Loading Keras
-import keras
-from keras.models import Sequential, Model
-from keras.layers import Dense, Input, BatchNormalization, Dropout
-from keras import metrics
-from keras.optimizers import SGD
-from keras.losses import binary_crossentropy
+import tensorflow.keras
+from tensorflow.keras.models import Sequential, Model
+from tensorflow.keras.layers import Dense, Input, BatchNormalization, Dropout
+from tensorflow.keras import metrics
+from tensorflow.keras.optimizers import SGD
+from tensorflow.keras.losses import binary_crossentropy
 
 #Loading sklearn for data processing & analysis
 import sklearn as skl
