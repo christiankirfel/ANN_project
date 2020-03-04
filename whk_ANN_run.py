@@ -1,3 +1,8 @@
+'''
+run script for the ANN network
+don't actually use this to run, use runANN.sh instead for additional setup
+'''
+
 #To time the code
 import time
 

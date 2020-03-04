@@ -5,7 +5,11 @@ import sys
 import configparser as cfg
 
 #Loading Keras
-import tensorflow.keras
+import tensorflow as tf
+NUM_THREADS=1
+tf.config.threading.set_inter_op_parallelism_threads(NUM_THREADS)
+tf.config.threading.set_intra_op_parallelism_threads(NUM_THREADS)
+tf.config.optimizer.set_jit(True)
 from tensorflow.keras.models import Sequential, Model
 from tensorflow.keras.layers import Dense, Input, BatchNormalization, Dropout
 from tensorflow.keras import metrics
@@ -297,8 +301,8 @@ class ANN_environment(object):
 		This function runs the actual adversarial training by alternating between training the discriminator and adversary networks
 		'''
 
-		#losses_test = {"L_f": [], "L_r": [], "L_f - L_r": []}
-		#losses_train = {"L_f": [], "L_r": [], "L_f - L_r": []}
+		losses_test = {"L_f": [], "L_r": [], "L_f - L_r": []}
+		losses_train = {"L_f": [], "L_r": [], "L_f - L_r": []}
 
 		def make_trainable(network, flag):
 			#helper function
@@ -314,8 +318,8 @@ class ANN_environment(object):
 			print('Running training: Iteration ' + str(iteration+1) + ' of ' + str(self.training_iterations))
 
 			#Only save losses every 5 iterations
-			#if iteration % 5 == 0 or iteration == (self.training_iterations):
-			#	self.save_losses(iteration, self.model_combined, losses_test, losses_train)
+			if iteration % 5 == 0 or iteration == (self.training_iterations):
+				self.save_losses(iteration, self.model_combined, losses_test, losses_train)
 
 			make_trainable(self.model_discriminator, True)
 			make_trainable(self.model_adversary, False)

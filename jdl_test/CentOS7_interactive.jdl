@@ -1,0 +1,14 @@
+Transfer_input_files = ../runANN.sh, ../variables.txt, ../config_whk_ANN.ini, ../whk_ANN_run.py, ../whk_ANN_defs.py
+
+JobBatchName = CentOS7_interactive
+
+Executable = interactive_sleep.sh
+
++ContainerOS = "CentOS7"
+
+Request_gpus = 1
+Request_cpus = 16
+Request_memory = 16 GB
+Request_disk = 5 GB
+
+Queue
