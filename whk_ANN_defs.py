@@ -15,6 +15,8 @@ from tensorflow.keras.layers import Dense, Input, BatchNormalization, Dropout
 from tensorflow.keras import metrics
 from tensorflow.keras.optimizers import SGD
 from tensorflow.keras.losses import binary_crossentropy
+#for plotting the model
+from tensorflow.keras.utils import plot_model
 
 #Loading sklearn for data processing & analysis
 import sklearn as skl
@@ -40,12 +42,13 @@ color_sys = '#009900'
 color_tW2 = '#02590f'
 color_tt2 = '#FF6600'
 
+
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 
 #Setting up the output directories
 #output_path = '/cephfs/user/s6chkirf/whk_adversarialruns_' + sys.argv[1] + '_' + sys.argv[2] + '_' + sys.argv[3] + '_' + sys.argv[4] + '_' + sys.argv[5] + '_' +sys.argv[6] + '_' + sys.argv[7] + '/'
-output_path = 'output/'
+output_path = 'output-gpu-noadv/'
 array_path = output_path + 'arrays/'
 if not os.path.exists(output_path):
 	os.makedirs(output_path)
@@ -292,7 +295,7 @@ class ANN_environment(object):
 
 		self.model_combined = Model(inputs = self.adversary_input, outputs = [self.model_discriminator(self.adversary_input), self.model_adversary(self.adversary_input)])
 		#Compiling a model with multiple loss functions lets Keras use the sum by default
-		self.model_combined.compile( loss = ['binary_crossentropy', make_losses_adversary()], optimizer = self.combined_optimizer)   
+		self.model_combined.compile( loss = ['binary_crossentropy', make_losses_adversary()], optimizer = self.combined_optimizer)
 
 
 	
@@ -318,19 +321,19 @@ class ANN_environment(object):
 			print('Running training: Iteration ' + str(iteration+1) + ' of ' + str(self.training_iterations))
 
 			#Only save losses every 5 iterations
-			if iteration % 5 == 0 or iteration == (self.training_iterations):
+			if iteration == (self.training_iterations):
 				self.save_losses(iteration, self.model_combined, losses_test, losses_train)
 
 			make_trainable(self.model_discriminator, True)
 			make_trainable(self.model_adversary, False)
 
-			self.model_history = self.model_combined.fit(self.sample_training, [self.target_training, self.target_adversarial], epochs=1, batch_size = int(self.config['BatchSize']), sample_weight = [self.weight_training.ravel(),self.weight_adversarial.ravel()])
+			self.model_history = self.model_combined.fit(self.sample_training, [self.target_training, self.target_adversarial], epochs=1, batch_size = int(self.config['BatchSize']), sample_weight = [self.weight_training.ravel(),self.weight_adversarial.ravel()], verbose = 0)
 			self.model_history_array.append(self.model_history)
 
 			make_trainable(self.model_discriminator, False)
 			make_trainable(self.model_adversary, True)
 
-			self.adversary_history = self.model_adversary.fit(self.sample_training, self.target_adversarial, epochs=1, batch_size = int(self.config['BatchSize']), sample_weight = self.weight_training.ravel())
+			self.adversary_history = self.model_adversary.fit(self.sample_training, self.target_adversarial, epochs=1, batch_size = int(self.config['BatchSize']), sample_weight = self.weight_training.ravel(), verbose = 0)
 			self.adversary_history_array.append(self.adversary_history)
 
 
@@ -425,6 +428,8 @@ class ANN_environment(object):
 	def save_losses(self, i, network, lossestest, lossestrain):
 		l_test = network.evaluate(self.sample_training, [self.target_training, self.target_adversarial], batch_size = int(self.config['BatchSize']))
 		l_train = network.evaluate(self.sample_validation, [self.target_validation, self.target_adversarial_validation], batch_size = int(self.config['BatchSize']))
+		self.l_test = l_test
+		self.l_train = l_train
 		lossestest["L_f"].append(l_test[1])
 		lossestest["L_r"].append(-l_test[2])
 		lossestest["L_f - L_r"].append(l_test[0])
@@ -462,16 +467,16 @@ class ANN_environment(object):
 				
 		plt.hist(self.signal_histo, range=[0., 1.], linewidth = 2, bins=30, histtype="step", density = True, color=color_tW, label = "Signal")
 		plt.hist(self.background_histo, range=[0., 1.], linewidth = 2, bins=30, histtype="step", density = True, color=color_tt, label = "Background")
-#        plt.hist(self.model_prediction[self.target_training.tolist() == 0], range=[0., 1.], linewidth = 2, bins=30, histtype="step", normed=1, color=color_tt)
-#        plt.hist(predicttest__ANN[test_target == 1],   range=[xlo, xhi], linewidth = 2, bins=bins, histtype="step", normed=1, color=color_tW2, label='$Sig_{test}$', linestyle='dashed')
-#        plt.hist(predicttest__ANN[test_target == 0],   range=[xlo, xhi], linewidth = 2, bins=bins, histtype="step", normed=1, color=color_tt2, label='$Bkg_{test}$', linestyle='dashed')
-#        plt.ylim(0, plt.gca().get_ylim()[1] * float(Options['yScale']))
+		#plt.hist(self.model_prediction[self.target_training.tolist() == 0], range=[0., 1.], linewidth = 2, bins=30, histtype="step", normed=1, color=color_tt)
+		#plt.hist(predicttest__ANN[test_target == 1],   range=[xlo, xhi], linewidth = 2, bins=bins, histtype="step", normed=1, color=color_tW2, label='$Sig_{test}$', linestyle='dashed')
+	  	#plt.hist(predicttest__ANN[test_target == 0],   range=[xlo, xhi], linewidth = 2, bins=bins, histtype="step", normed=1, color=color_tt2, label='$Bkg_{test}$', linestyle='dashed')
+		#plt.ylim(0, plt.gca().get_ylim()[1] * float(Options['yScale']))
 		plt.legend()
 		plt.xlabel('Network response', horizontalalignment='left', fontsize='large')
 		plt.ylabel('Event fraction', fontsize='large')
 		plt.legend(frameon=False)
 		#plt.title('Normalised')
-#        plt.gcf().savefig(output_path + 'ANN_NN_' + file_extension + '.png')
+		#plt.gcf().savefig(output_path + 'ANN_NN_' + file_extension + '.png')
 		plt.gcf().savefig(output_path + 'separation_discriminator.png')
 		#plt.show()
 		plt.gcf().clear()
@@ -482,18 +487,20 @@ class ANN_environment(object):
 		axis1 = plt.subplot(211)
 		self.nominal_histo = []
 		self.systematic_histo = []
+		self.nominal_adversarial_histo = []
+		self.systematic_adversarial_histo = []
 		for i in range(len(self.sample_validation)):
 			if self.target_adversarial_validation[i] == 1 and self.target_validation[i] == 1:
 				self.nominal_histo.append(self.model_prediction[i])
 			if self.target_adversarial_validation[i] == 0 and self.target_validation[i] == 1:
-				self.systematic_histo.append(self.model_prediction[i])
-				
+				self.systematic_histo.append(self.model_prediction[i]) 
+		
 		ns1, bins1, patches1 = plt.hist(self.nominal_histo, range=[0., 1.], linewidth = 2, bins=30, histtype="step", density = True, color=color_tW, label = "Nominal")
 		ns2, bins2, patches2 = plt.hist(self.systematic_histo, range=[0., 1.], linewidth = 2, bins=30, histtype="step", density = True, color=color_sys, label = "Systematics")
-#        plt.hist(self.model_prediction[self.target_training.tolist() == 0], range=[0., 1.], linewidth = 2, bins=30, histtype="step", normed=1, color=color_tt)
-#        plt.hist(predicttest__ANN[test_target == 1],   range=[xlo, xhi], linewidth = 2, bins=bins, histtype="step", normed=1, color=color_tW2, label='$Sig_{test}$', linestyle='dashed')
-#        plt.hist(predicttest__ANN[test_target == 0],   range=[xlo, xhi], linewidth = 2, bins=bins, histtype="step", normed=1, color=color_tt2, label='$Bkg_{test}$', linestyle='dashed')
-#        plt.ylim(0, plt.gca().get_ylim()[1] * float(Options['yScale']))
+		#plt.hist(self.model_prediction[self.target_training.tolist() == 0], range=[0., 1.], linewidth = 2, bins=30, histtype="step", normed=1, color=color_tt)
+		#plt.hist(predicttest__ANN[test_target == 1],   range=[xlo, xhi], linewidth = 2, bins=bins, histtype="step", normed=1, color=color_tW2, label='$Sig_{test}$', linestyle='dashed')
+		#plt.hist(predicttest__ANN[test_target == 0],   range=[xlo, xhi], linewidth = 2, bins=bins, histtype="step", normed=1, color=color_tt2, label='$Bkg_{test}$', linestyle='dashed')
+		#plt.ylim(0, plt.gca().get_ylim()[1] * float(Options['yScale']))
 		plt.legend()
 		plt.ylabel('Event fraction', fontsize='large')
 		plt.legend(frameon=False)
@@ -507,17 +514,33 @@ class ANN_environment(object):
 				ratioArray.append(1.)
 
 		axis2 = plt.subplot(212, sharex = axis1)
-#        axis2.set_ylim([0., 2.])
+		#axis2.set_ylim([0., 2.])
 		plt.plot(bins1[:-1], ratioArray, color = "blue", drawstyle = 'steps-mid')
-#        plt.plot(bins1[:-1], ratioArray, color = "blue", marker = "_", linestyle = 'None', markersize = 12)
+		#plt.plot(bins1[:-1], ratioArray, color = "blue", marker = "_", linestyle = 'None', markersize = 12)
 		plt.hlines(1, xmin = -0.0, xmax = 1.0)
 		plt.xlabel('Network response', horizontalalignment='left', fontsize='large')
+		plt.ylabel('Event ratio')
 		#plt.title('Normalised')
-#        plt.gcf().savefig(output_path + 'ANN_NN_' + file_extension + '.png')
+		#plt.gcf().savefig(output_path + 'ANN_NN_' + file_extension + '.png')
 		plt.gcf().savefig(output_path + 'separation_adversary.png')
 		#plt.show()
 		plt.gcf().clear()
 
+		def plot_all(self):
+			plt.title('Adversary Response')
+			axis1 = plt.subplot(211)
+			self.nominal_histo = []
+			self.systematic_histo = []
+			self.nominal_adversarial_histo = []
+			self.systematic_adversarial_histo = []
+			for i in range(len(self.sample_validation)):
+				if self.target_adversarial_validation[i] == 1 and self.target_validation[i] == 1:
+					self.nominal_histo.append(self.model_prediction[i])
+				if self.target_adversarial_validation[i] == 0 and self.target_validation[i] == 1:
+					self.systematic_histo.append(self.model_prediction[i]) 
+			
+			ns1, bins1, patches1 = plt.hist(self.nominal_histo, range=[0., 1.], linewidth = 2, bins=30, histtype="step", density = True, color=color_tW, label = "Nominal")
+			ns2, bins2, patches2 = plt.hist(self.systematic_histo, range=[0., 1.], linewidth = 2, bins=30, histtype="step", density = True, color=color_sys, label = "Systematics")
 
 	def plot_accuracy(self):
 		plt.plot(self.model_history.history['binary_accuracy'])
@@ -529,6 +552,35 @@ class ANN_environment(object):
 		#plt.show()
 		plt.gcf().savefig(output_path + 'acc.png')
 		plt.gcf().clear()
+
+
+	def fill_jar(self):
+		'''
+		save the result objects so they can be looked at and plotted at a later date
+		for the love of god make this less janky when theres time
+		'''
+		import pickle
+		with open('sample_validation.jar','wb') as f:
+			pickle.dump(self.sample_validation, f)
+		with open('target_validation.jar','wb') as f:
+			pickle.dump(self.target_validation, f)
+		with open('model_prediction.jar','wb') as f:
+			pickle.dump(self.model_prediction, f)
+		with open('target_adversarial_validation.jar','wb') as f:
+			pickle.dump(self.target_adversarial_validation, f)
+		pickle.dump(self.model_history.history, open('history_dict.jar','wb'))
+		pickle.dump(self.adversary_history.history, open('adversary_history_dict.jar','wb'))
+		with open('l_test.jar','wb') as f:
+			pickle.dump(self.l_test,f)
+		with open('l_train.jar','wb') as f:
+			pickle.dump(self.l_train,f)
+		with open('tpr.jar','wb') as f:
+			pickle.dump(self.tpr,f)
+		with open('fpr.jar','wb') as f:
+			pickle.dump(self.fpr,f)
+		with open('auc.jar','wb') as f:
+			pickle.dump(self.auc,f)
+
 
 #	def write_log(self):
 #		with open('whk_log.txt','w') as f:

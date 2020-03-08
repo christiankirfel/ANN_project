@@ -15,22 +15,23 @@ Universe                = vanilla
 # Should executable be transferred from the submit node to the job working directory on the worker node?
 Transfer_executable     = True
 # List of input files to be transferred from the submit node to the job working directory on the worker node
-Transfer_input_files    = 
+Transfer_input_files    = runANN.sh, variables.txt, config_whk_ANN.ini,  whk_ANN_run.py,  whk_ANN_defs.py
 # List of output files to be transferred from the job working directory on the worker node to the submit node
-Transfer_output_files   = 
+Transfer_output_files   = code/model_prediction.jar, code/sample_validation.jar, code/target_adversarial_validation.jar, code/target_validation.jar, code/history_dict.jar, code/adversary_history_dict.jar, code/l_test.jar, code/l_train.jar, code/tpr.jar, code/fpr.jar, code/auc.jar
 
 # Specify job input and output
-Error                   = log_whk_ANN/err/err.test_run 
-Input                   =                                                
-Output                  = log_whk_ANN/out/out.test_run                                                
-Log                     = log_whk_ANN/log/log.test_run
-batch_name = "whk_ANN"
+Error                   = log_whk_ANN/err/$(ClusterId).$(Process).err.txt
+#Input                   =                                                
+Output                  = log_whk_ANN/out/$(ClusterId).$(Process).out.txt                          
+Log                     = log_whk_ANN/log/$(ClusterId).$(Process).log.txt
+JobBatchName = "whk_ANN_GPU"
 
 # Request resources to the best of your knowledge
 # (check log file after job completion to compare requested and used resources)
 # Memory in MiB, if no unit is specified!
 Request_memory          = 8 GB
-Request_cpus            = 8
+Request_cpus            = 16
+Request_gpus            = 1
 # Disk space in kiB, if no unit is specified!
 Request_disk            = 5 GB
 
@@ -39,46 +40,3 @@ Request_disk            = 5 GB
 +ContainerOS            = "CentOS7"
 
 queue
-#queue lr_discriminator, lr_adversary, lr_combined, mom_discriminator, mom_adversary, mom_combined, ttbar_weight from (
-#    0.001 0.01 0.01 0.3 0.3 0.3 0.0
-#    0.03 0.01 0.01 0.3 0.3 0.3 0.0
-#    0.07 0.01 0.01 0.3 0.3 0.3 0.0
-#    0.01 0.01 0.01 0.1 0.3 0.3 0.0
-#    0.03 0.03 0.01 0.1 0.3 0.3 0.0
-#    0.07 0.07 0.01 0.1 0.3 0.3 0.0
-#    0.01 0.01 0.01 0.3 0.3 0.3 0.0
-#    0.03 0.01 0.03 0.3 0.3 0.3 0.0
-#    0.07 0.01 0.07 0.3 0.3 0.3 0.0
-#    0.01 0.01 0.01 0.8 0.3 0.3 0.0
-#    0.03 0.01 0.01 0.8 0.8 0.3 0.0
-#    0.07 0.01 0.01 0.8 0.3 0.8 0.0
-#Standard Run
-#    0.01 0.01 0.01 0.3 0.3 0.3 0.0
-#Weight runs
-#    0.01 0.01 0.01 0.3 0.3 0.3 0.0
-#    0.01 0.01 0.01 0.3 0.3 0.3 0.2
-#    0.01 0.01 0.01 0.3 0.3 0.3 0.4
-#    0.01 0.01 0.01 0.3 0.3 0.3 0.6
-#    0.01 0.01 0.01 0.3 0.3 0.3 0.8
-#    0.01 0.01 0.01 0.3 0.3 0.3 1.0
-#Combine mom and weight    
-#    0.01 0.01 0.01 0.6 0.3 0.3 0.0
-#    0.01 0.01 0.01 0.3 0.6 0.3 0.0
-#    0.01 0.01 0.01 0.3 0.3 0.6 0.0
-#    0.01 0.01 0.01 0.6 0.3 0.3 0.5
-#    0.01 0.01 0.01 0.3 0.6 0.3 0.5
-#    0.01 0.01 0.01 0.3 0.3 0.6 0.5
-#    0.01 0.01 0.01 0.6 0.3 0.3 1.0
-#    0.01 0.01 0.01 0.3 0.6 0.3 1.0
-#    0.01 0.01 0.01 0.3 0.3 0.6 1.0
-#Combine lr and weight    
-#    0.001 0.01 0.01 0.3 0.3 0.3 0.0
-#    0.01 0.001 0.01 0.3 0.3 0.3 0.0
-#    0.01 0.01 0.001 0.3 0.3 0.3 0.0
-#    0.001 0.01 0.01 0.3 0.3 0.3 0.5
-#    0.01 0.001 0.01 0.3 0.3 0.3 0.5
-#    0.01 0.01 0.001 0.3 0.3 0.3 0.5
-#    0.001 0.01 0.01 0.3 0.3 0.3 1.0
-#    0.01 0.001 0.01 0.3 0.3 0.3 1.0
-#    0.01 0.01 0.001 0.3 0.3 0.3 1.0
-#)

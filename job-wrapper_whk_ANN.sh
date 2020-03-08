@@ -16,14 +16,13 @@ source /etc/profile
 
 # Set up desired ROOT version (taken from CVMFS)
 setupATLAS
-export NUMEXPR_NUM_THREADS=8
-export MKL_NUM_THREADS=8
-export OMP_NUM_THREADS=8
+
 
 cd /jwd
 module load anaconda/2019.10-py37
-tar xf ${BUDDY}/tf2_env.tar.gz
-source activate /jwd/tf2_env
-tar xf ${BUDDY}/whk_ANN_code.tar.gz
-cd whk_ANN_code
-python whk_ANN_run.py
+tar xf ${BUDDY}/tf2_gpu.tar.gz
+source activate /jwd/tf2_gpu
+mkdir code
+mv *.py runANN.sh *.ini *.txt code/
+cd code
+source runANN.sh

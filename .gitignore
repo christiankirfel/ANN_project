@@ -1,5 +1,8 @@
 # ignore output
 output/
+output*/
+gpu_out/
+results/
 *.png
 *.pdf
 
@@ -12,4 +15,13 @@ __pycache__
 # ignore logs
 *log*.txt
 *.log
+log_whk_ANN/
 
+# random testing stuff
+*_test/
+
+# pickled files
+*.jar
+
+# zipped environment
+whk_env.tar.gz
