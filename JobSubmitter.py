@@ -1,3 +1,37 @@
+import os, sys
+
+argument_string = ''
+option = ''
+varlist = []
+o_pseudo = False
+argv_pos = 1
+
+
+#parse arguments#
+try:
+	if len(sys.argv) == 1:
+		argument_string = ''
+	else:
+		while argv_pos < len(sys.argv):
+			if str(sys.argv[argv_pos]) == '-pseudo':
+				o_pseudo = True
+				argv_pos += 1
+			else:
+				argument_string = ' options from (\n'
+				option = str(sys.argv[argv_pos])
+				print('Option: ' + option)
+				varlist = str(sys.argv[argv_pos+1]).split(',')
+				for el in varlist:
+					print('Value :' + str(el))
+					argument_string += ('\t'+option+'='+str(el)+'\n')
+				argv_pos+=2
+			argument_string+=')'
+except:
+	print('Couldn\'t parse arguments. Format: JobSubmitter.py [options] [comma-separated values]')
+	sys.exit(1)
+	
+
+script = """
 #################################################################################################
 #                            HTCondor Job Submission File 
 # See http://research.cs.wisc.edu/htcondor/manual/current/condor_submit.html for further commands
@@ -6,7 +40,7 @@
 # Path to executable
 Executable              = job-wrapper_whk_ANN.sh
 # Job process number is given as argument to executable
-Arguments               = "$(lambda)"
+Arguments               = "$(options)"
 #$(Process) $(Variable) 
 # Use HTCondor's vanilla universe (see http://research.cs.wisc.edu/htcondor/manual/current/2_4Running_Job.html)
 Universe                = vanilla
@@ -40,9 +74,13 @@ Request_disk            = 5 GB
 # Choose OS (options: "SL6", "CentOS7", "Ubuntu1604")
 +ContainerOS            = "CentOS7"
 
-queue lambda from (
-    LambdaValue=-0.01
-    LambdaValue=-0.05
-    LambdaValue=-0.1
-    LambdaValue=-0.005
-)
+queue"""
+
+script += argument_string
+with open('AutoJobSubmission.jdl','w') as f:
+	f.write(script)
+
+if o_pseudo==False:
+	os.system('condor_submit AutoJobSubmission.jdl')
+	os.system('rm -f AutoJobSubmission.jdl')
+

@@ -3,20 +3,22 @@ import os
 import math
 import sys
 import configparser as cfg
+import pickle
+from datetime import datetime
 
-#Loading Keras
+#Loading tensorflow
+#Setting some options for BAF
 import tensorflow as tf
 NUM_THREADS=1
 tf.config.threading.set_inter_op_parallelism_threads(NUM_THREADS)
 tf.config.threading.set_intra_op_parallelism_threads(NUM_THREADS)
 tf.config.optimizer.set_jit(True)
+
 from tensorflow.keras.models import Sequential, Model
 from tensorflow.keras.layers import Dense, Input, BatchNormalization, Dropout
 from tensorflow.keras import metrics
 from tensorflow.keras.optimizers import SGD
 from tensorflow.keras.losses import binary_crossentropy
-#for plotting the model
-from tensorflow.keras.utils import plot_model
 
 #Loading sklearn for data processing & analysis
 import sklearn as skl
@@ -48,7 +50,7 @@ color_tt2 = '#FF6600'
 
 #Setting up the output directories
 #output_path = '/cephfs/user/s6chkirf/whk_adversarialruns_' + sys.argv[1] + '_' + sys.argv[2] + '_' + sys.argv[3] + '_' + sys.argv[4] + '_' + sys.argv[5] + '_' +sys.argv[6] + '_' + sys.argv[7] + '/'
-output_path = 'output-gpu-noadv/'
+output_path = '/cephfs/user/s6niboei/out2/'
 array_path = output_path + 'arrays/'
 if not os.path.exists(output_path):
 	os.makedirs(output_path)
@@ -66,6 +68,8 @@ class ANN_environment(object):
 	def __init__(self,args):
 		""" opens files, loads config and initializes variables """
 		#load the config
+		self.time_start = datetime.now().strftime("%H_%M_%S")
+		self.custom_config = ''
 		self.config_path = "config_whk_ANN.ini"
 		self.config = cfg.ConfigParser(inline_comment_prefixes="#")
 		try:
@@ -73,20 +77,30 @@ class ANN_environment(object):
 		except:
 			print('[WARNING] No config file found. Using defaults')
 			self.config.read("default_whk_ANN.ini")
-		print(self.config)
 		self.config = self.config['General']
 
 		#TODO load additional config for HTCondor/BAF
 		if len(args) > 1:
-			if len(args) % 2 == 1:
-				for x in range(1,len(args),2):
-					if self.config.get(str(args[x]))==None:
-						print('[ERROR] Unknown key ' + str(args[x]))
-					self.config[str(args[x])] = str(args[x+1])
-					print('Custom config: ' + str(args[x]) + '=' + str(args[x+1]))
+			for x in range(1,len(args)):
+				try:
+					temp = str(args[x]).split('=')
+				except:
+					print('[ERROR] Additional config should be in the format Option=Value')
+					sys.exit(1)
+				self.config[temp[0]] = temp[1]
+				self.custom_config = '_' + temp[0] + '_' + temp[1]
+
+			#if len(args) % 2 == 1:
+			#	for x in range(1,len(args),2):
+			#		if self.config.get(str(args[x]))==None:
+			#			print('[ERROR] Unknown key ' + str(args[x]))
+			#		self.config[str(args[x])] = str(args[x+1])
+				print('Custom config: ' + str(temp[0]) + '=' + str(temp[1]))
 
 		#Use the config file for everything if possible
 		#A list of more general settings
+		self.print_config()
+
 		with open("variables.txt","r") as f:
 			self.variables = np.asarray([line.strip() for line in f])
 		#The seed is used to make sure that both the events and the labels are shuffeled the same way because they are not inherently connected.
@@ -149,6 +163,7 @@ class ANN_environment(object):
 		self.validation_fraction = float(self.config['ValidationFraction'])
 
 		self.batch_size = int(self.config['BatchSize'])
+		self.verbosity = int(self.config['Verbosity'])
 
 		#The following set of variables is used to evaluate the result
 		#fpr = false positive rate, tpr = true positive rate
@@ -157,7 +172,11 @@ class ANN_environment(object):
 		self.threshold = 0.
 		self.auc = 0.
 
+		self.losses_test = {"L_f": [], "L_r": [], "L_f - L_r": []}
+		self.losses_train = {"L_f": [], "L_r": [], "L_f - L_r": []}
 		self.lambda_value = float(self.config['LambdaValue'])
+		self.use_last_layer = bool(self.config['UseLastLayer'])
+
 
 		#self.logger = ""
 		#self.logger.append('Tensorflow ' + os.system("python3 -c 'import tensorflow; print(tf.__version__)'") + '\n')
@@ -257,6 +276,9 @@ class ANN_environment(object):
 		self.model_discriminator.compile(loss = "binary_crossentropy", weighted_metrics = [metrics.binary_accuracy], optimizer = self.discriminator_optimizer)
 		self.model_discriminator.summary()
 
+		self.adversary_input_model = Model(inputs = [self.network_input], outputs = [self.model_discriminator.get_layer('dense_4').output])
+		self.adversary_input_model.summary()
+
 	def build_adversary(self):
 		'''
 		Here the adversary is built
@@ -270,7 +292,11 @@ class ANN_environment(object):
 		#It is just another classifier
 
 		self.adversary_input = Input( shape = (self.input_dimension) )
-		self.layer_adversary = self.model_discriminator(self.network_input)
+		# decide whether to use last or second to last layer
+		if self.use_last_layer:
+			self.layer_adversary = self.model_discriminator(self.network_input)
+		else:
+			self.layer_adversary = self.adversary_input_model(self.network_input)
 		self.layer_adversary = Dense( self.adversary_nodes, activation = 'elu')(self.layer_adversary)
 		self.layer_adversary = BatchNormalization()(self.layer_adversary)
 		self.layer_adversary = Dropout(self.adversary_dropout)(self.layer_adversary)
@@ -296,16 +322,12 @@ class ANN_environment(object):
 		self.model_combined = Model(inputs = self.adversary_input, outputs = [self.model_discriminator(self.adversary_input), self.model_adversary(self.adversary_input)])
 		#Compiling a model with multiple loss functions lets Keras use the sum by default
 		self.model_combined.compile( loss = ['binary_crossentropy', make_losses_adversary()], optimizer = self.combined_optimizer)
-
-
 	
 	def run_adversarial_training(self):
 		'''
 		This function runs the actual adversarial training by alternating between training the discriminator and adversary networks
 		'''
 
-		losses_test = {"L_f": [], "L_r": [], "L_f - L_r": []}
-		losses_train = {"L_f": [], "L_r": [], "L_f - L_r": []}
 
 		def make_trainable(network, flag):
 			#helper function
@@ -321,22 +343,24 @@ class ANN_environment(object):
 			print('Running training: Iteration ' + str(iteration+1) + ' of ' + str(self.training_iterations))
 
 			#Only save losses every 5 iterations
-			if iteration == (self.training_iterations):
-				self.save_losses(iteration, self.model_combined, losses_test, losses_train)
+			#if iteration%5 == 0 or iteration == (self.training_iterations-1):
+			
 
 			make_trainable(self.model_discriminator, True)
 			make_trainable(self.model_adversary, False)
 
-			self.model_history = self.model_combined.fit(self.sample_training, [self.target_training, self.target_adversarial], epochs=1, batch_size = int(self.config['BatchSize']), sample_weight = [self.weight_training.ravel(),self.weight_adversarial.ravel()], verbose = 0)
-			self.model_history_array.append(self.model_history)
+			self.model_history = self.model_combined.fit(self.sample_training, [self.target_training, self.target_adversarial], validation_data = (self.sample_validation, [self.target_validation, self.target_adversarial_validation], [self.weight_validation.ravel(), self.weight_adversarial_validation.ravel()]), epochs=1, batch_size = self.batch_size, sample_weight = [self.weight_training.ravel(),self.weight_adversarial.ravel()], verbose = self.verbosity)
+			self.model_history_array.append(self.model_history.history)
+			print('MODELHISTORY')
+			print(self.model_history.history)
 
 			make_trainable(self.model_discriminator, False)
 			make_trainable(self.model_adversary, True)
 
-			self.adversary_history = self.model_adversary.fit(self.sample_training, self.target_adversarial, epochs=1, batch_size = int(self.config['BatchSize']), sample_weight = self.weight_training.ravel(), verbose = 0)
-			self.adversary_history_array.append(self.adversary_history)
+			self.adversary_history = self.model_adversary.fit(self.sample_training, self.target_adversarial, epochs=1, batch_size = self.batch_size, sample_weight = self.weight_training.ravel(), verbose = self.verbosity)
+			self.adversary_history_array.append(self.adversary_history.history)
 
-
+			self.save_losses(iteration, self.model_combined)
 
 	def pretrain_adversary(self):
 		'''
@@ -344,11 +368,6 @@ class ANN_environment(object):
 		'''
 
 		self.model_adversary.fit(self.sample_training, self.target_adversarial.ravel(), epochs = self.adversary_epochs, batch_size = int(self.config['BatchSize']), sample_weight = self.weight_adversarial.ravel())
-
-
-
-
-
 
 	def pretrain_discriminator(self):
 		'''
@@ -372,11 +391,11 @@ class ANN_environment(object):
 
 	def predict_model(self):
 
-		self.model_prediction = self.model_discriminator.predict(self.sample_validation).ravel()
+		self.model_prediction = self.model_discriminator.predict(self.sample_validation, batch_size = self.batch_size).ravel()
 		self.fpr, self.tpr, self.threshold = roc_curve(self.target_validation, self.model_prediction)
 		self.auc = auc(self.fpr, self.tpr)
 
-		self.adversary_prediction = self.model_adversary.predict(self.sample_validation).ravel()
+		self.adversary_prediction = self.model_adversary.predict(self.sample_validation, batch_size = self.batch_size).ravel()
 		self.adversary_fpr, self.adversary_tpr, self.adversary_threshold = roc_curve(self.target_adversarial_validation, self.adversary_prediction)
 		self.adversary_auc = auc(self.adversary_fpr, self.adversary_tpr)
 
@@ -385,8 +404,9 @@ class ANN_environment(object):
 
 #----------------------------------------------------------------------------------------------Plot structure------------------------------------------------------------------------------------------------------------
 	def plot_losses(self, i, l_test, l_train):
+		print('Printing losses')
 
-		ax1 = plt.subplot(311)   
+		ax1 = plt.subplot(311) 
 		values_test = np.array(l_test["L_f"])
 		values_train = np.array(l_train["L_f"])
 		plt.plot(range(len(values_test)), values_test, label=r"$Loss_{net1}^{test}$", color="blue", linestyle='dashed')
@@ -418,26 +438,32 @@ class ANN_environment(object):
 		plt.xlabel('Epoch')
 		
 		plt.legend(frameon=False)
-		plt.gcf().savefig(output_path + 'losses_' + str(i/5) + '.png')
+		plt.gcf().savefig(output_path + 'losses_' + datetime.now().strftime("%H_%M_%S") + '.png')
 		plt.gcf().clear()
 
 		#losses_test = {"L_f": [], "L_r": [], "L_f - L_r": []}
 		#losses_train = {"L_f": [], "L_r": [], "L_f - L_r": []}
 
 	#This function is inactive for now
-	def save_losses(self, i, network, lossestest, lossestrain):
+	def save_losses(self, i, network):
+		#l_test = network.evaluate(self.sample_training, [self.target_training, self.target_adversarial], sample_weight = [self.weight_training.ravel(),self.weight_adversarial.ravel()], batch_size = int(self.config['BatchSize']))
+		#l_train = network.evaluate(self.sample_validation, [self.target_validation, self.target_adversarial_validation], sample_weight = [self.weight_validation.ravel(), self.weight_adversarial_validation.ravel()], batch_size = int(self.config['BatchSize']))
 		l_test = network.evaluate(self.sample_training, [self.target_training, self.target_adversarial], batch_size = int(self.config['BatchSize']))
 		l_train = network.evaluate(self.sample_validation, [self.target_validation, self.target_adversarial_validation], batch_size = int(self.config['BatchSize']))
-		self.l_test = l_test
-		self.l_train = l_train
-		lossestest["L_f"].append(l_test[1])
-		lossestest["L_r"].append(-l_test[2])
-		lossestest["L_f - L_r"].append(l_test[0])
-		lossestrain["L_f"].append(l_train[1])
-		lossestrain["L_r"].append(-l_train[2])
-		lossestrain["L_f - L_r"].append(l_train[0])
-		if i % 5 == 0 or i == (self.training_iterations):
-			self.plot_losses(i, lossestest, lossestrain)
+		self.losses_test["L_f"].append(l_test[1])
+		self.losses_test["L_r"].append(-l_test[2])
+		self.losses_test["L_f - L_r"].append(l_test[0])
+		self.losses_train["L_f"].append(l_train[1])
+		self.losses_train["L_r"].append(-l_train[2])
+		self.losses_train["L_f - L_r"].append(l_train[0])
+		print('LTEST')
+		print(l_test)
+
+		#pickle.dump(lossestest,open('lossestest.jar','wb'))
+		#pickle.dump(lossestrain,open('lossestrain.jar','wb'))
+
+		if i == (self.training_iterations-1):
+		 self.plot_losses(i, self.losses_test, self.losses_train)
 
 
 
@@ -559,28 +585,65 @@ class ANN_environment(object):
 		save the result objects so they can be looked at and plotted at a later date
 		for the love of god make this less janky when theres time
 		'''
-		import pickle
-		with open('sample_validation.jar','wb') as f:
+		with open(output_path + 'sample_validation.jar','wb') as f:
 			pickle.dump(self.sample_validation, f)
-		with open('target_validation.jar','wb') as f:
+		with open(output_path + 'target_validation.jar','wb') as f:
 			pickle.dump(self.target_validation, f)
-		with open('model_prediction.jar','wb') as f:
+		with open(output_path + 'model_prediction.jar','wb') as f:
 			pickle.dump(self.model_prediction, f)
-		with open('target_adversarial_validation.jar','wb') as f:
+		with open(output_path + 'target_adversarial_validation.jar','wb') as f:
 			pickle.dump(self.target_adversarial_validation, f)
-		pickle.dump(self.model_history.history, open('history_dict.jar','wb'))
-		pickle.dump(self.adversary_history.history, open('adversary_history_dict.jar','wb'))
-		with open('l_test.jar','wb') as f:
-			pickle.dump(self.l_test,f)
-		with open('l_train.jar','wb') as f:
-			pickle.dump(self.l_train,f)
-		with open('tpr.jar','wb') as f:
-			pickle.dump(self.tpr,f)
-		with open('fpr.jar','wb') as f:
-			pickle.dump(self.fpr,f)
-		with open('auc.jar','wb') as f:
-			pickle.dump(self.auc,f)
+		#pickle.dump(self.model_history.history, open('history_dict.jar','wb'))
+		#pickle.dump(self.adversary_history.history, open('adversary_history_dict.jar','wb'))
+		#pickle.dump(self.l_test_s, open('l_test.jar','wb'))
+		#pickle.dump(self.l_train_s, open('l_train.jar','wb'))
+		#with open('tpr.jar','wb') as f:
+			#pickle.dump(self.tpr,f)
+		#with open('fpr.jar','wb') as f:
+		#	pickle.dump(self.fpr,f)
+		#with open('auc.jar','wb') as f:
+		#	pickle.dump(self.auc,f)
 
+	def save_as_root(self):
+	
+		import pickle
+		#pickle.dump(self.model_history.history, open('history.pickle', 'wb'))
+		pickle.dump(self.sample_validation, open('sample_validation.pickle','wb'))
+		pickle.dump(self.target_validation, open('target_validation.pickle','wb'))
+		pickle.dump(self.model_prediction, open('model_prediction.pickle','wb'))
+		pickle.dump(self.adversary_prediction, open('adversary_prediction.pickle','wb'))
+		pickle.dump(self.target_adversarial_validation, open('target_adversarial_validation.pickle','wb'))
+		pickle.dump(self.losses_test,open('losses_test.pickle','wb'))
+		pickle.dump(self.losses_train,open('losses_train.pickle','wb'))
+		pickle.dump(self.model_history_array, open('model_history_array.pickle','wb'))
+		pickle.dump(self.adversary_history_array, open('adversary_history_array.pickle','wb'))
+
+		with open('ANN_out' + self.custom_config + '_' + self.time_start + '.txt','w') as f:
+			for key in self.config:
+				f.write(key + ': ' + self.config[key])
+		
+		import tarfile
+		import glob
+		tar = tarfile.open('out/ANN_out' + self.custom_config + '_' + self.time_start + '.tar','w:gz')
+		#tar = tarfile.open('/cephfs/user/s6niboei/ANN_out_' + datetime.now().strftime("%H_%M_%S") + '.tar', 'w:gz')
+		for f in glob.glob('*.pickle'):
+			tar.add(f)
+			tar.add('ANN_out' + self.custom_config + '_' + self.time_start + '.txt')
+		tar.close()
+
+
+
+
+	def types(self):
+		print('sample_validation: ' + str(type(self.sample_validation)))
+		print('model_prediction: ' + str(type(self.model_prediction)))
+		print('model_history: ' + str(type(self.model_history)))
+		print('history.history: ' +str(type(self.model_history.history)))
+
+	def print_config(self):
+		print('Config used:')
+		for key in self.config:
+			print(key + ': ' + self.config[key])
 
 #	def write_log(self):
 #		with open('whk_log.txt','w') as f:

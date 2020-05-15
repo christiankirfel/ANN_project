@@ -5,10 +5,16 @@ gpu_out/
 results/
 *.png
 *.pdf
+*.tar
+out*/
+tempout/
+*.jar
+*.pickle
 
 # ignore VSC files
 .vscode/
 __pycache__
+
 # ignore any root files
 *.root
 
@@ -19,9 +25,8 @@ log_whk_ANN/
 
 # random testing stuff
 *_test/
-
-# pickled files
-*.jar
+random*/
+.asetup
 
 # zipped environment
 whk_env.tar.gz

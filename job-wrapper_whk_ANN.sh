@@ -25,4 +25,5 @@ source activate /jwd/tf2_gpu
 mkdir code
 mv *.py runANN.sh *.ini *.txt code/
 cd code
-source runANN.sh
+mkdir out
+source runANN.sh ${1}

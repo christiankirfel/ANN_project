@@ -34,20 +34,18 @@ first_training.pretrain_discriminator()
 #time1 = time.time()
 first_training.run_adversarial_training()
 #time1 = time.time() - time1
-#with open("batchsize_CPU_TF2.log",'a') as f:
+#with open("/cephfs/user/s6niboei/batchsize_CPU_TF2XLA_" + str(first_training.batch_size) + ".log",'a') as f:
 #    print(str(first_training.batch_size), "%.3f" % (time1), file=f)
 #print('Time for this batch size')
 #print(str(first_training.batch_size, "%.3f" % (time1)))
 first_training.predict_model()
-first_training.fill_jar()
+first_training.types()
+first_training.save_as_root()
+#first_training.fill_jar()
 #first_training.plot_roc()
 #first_training.plot_separation()
 #first_training.plot_separation_adversary()
 #first_trainings.plot_separation_adversary()
 #first_training.plot_losses()
 
-#timeTotal = time.time() - timeStart
-#tmins, tsecs = divmod(timeTotal, 60)
-#thours, tmins = divmod(tmins, 60)
-
-#print('Total time was %.3f seconds. (%f:%2f:%2f)' % ((time.time() - timeStart), thours, tmins, tsecs))
+#timeTotal = time.ti
