@@ -7,7 +7,7 @@ o_pseudo = False
 argv_pos = 1
 
 
-#parse arguments#
+#parse arguments
 try:
 	if len(sys.argv) == 1:
 		argument_string = ''
@@ -80,7 +80,7 @@ script += argument_string
 with open('AutoJobSubmission.jdl','w') as f:
 	f.write(script)
 
-if o_pseudo==False:
+if not o_pseudo:
 	os.system('condor_submit AutoJobSubmission.jdl')
 	os.system('rm -f AutoJobSubmission.jdl')
 

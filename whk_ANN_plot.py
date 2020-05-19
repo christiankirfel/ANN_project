@@ -114,22 +114,6 @@ def plot_losses_all():
 	plt.gcf().savefig('losses' + path_postfix + '.png')
 	plt.gcf().clear()
 
-def plot_losses_2():
-	plt.plot(loss)
-	plt.plot(val_loss)
-	plt.savefig('test_loss' + path_postfix + '.png')
-	plt.clf()
-
-	plt.plot(model_1_loss)
-	plt.plot(val_model_1_loss)
-	plt.savefig('test_model_1_loss' + path_postfix + '.png')
-	plt.clf()
-
-	plt.plot(model_loss)
-	plt.plot(val_model_loss)
-	plt.savefig('test_model_loss' + path_postfix + '.png')
-	plt.clf()
-
 def plot_losses_combined():
 	ax1 = plt.subplot(311)
 	plt.plot(model_loss)
@@ -139,8 +123,8 @@ def plot_losses_combined():
 	#print(type(model_1_loss))
 	#model_1_loss1 = [-x for x in model_1_loss]
 	#val_model_1_loss1 = [-x for x in val_model_1_loss]
-	plt.plot(model_1_loss1)
-	plt.plot(val_model_1_loss1)
+	plt.plot(model_2_loss1)
+	plt.plot(val_model_2_loss1)
 
 	ax3 = plt.subplot(313, sharex=ax1)
 	plt.plot(loss)
@@ -171,8 +155,8 @@ def plot_accuracy():
 	Plot the accuracy. Surprising, isn't it?
 	'''
 	print('Eating a pickle')
-	plt.plot(model_history['binary_accuracy'])
-	plt.plot(model_history['val_binary_accuracy'])
+	plt.plot(model_history_array['binary_accuracy'])
+	plt.plot(model_history_arra['val_binary_accuracy'])
 	plt.title('model accuracy')
 	plt.ylabel('accuracy')
 	plt.xlabel('epoch')
@@ -194,11 +178,11 @@ color_tt2 = '#FF6600'
 path_prefix = ''
 path_postfix = ''
 
-for option in ['']:
+for f in glob.glob('*.tar'):
 
-	path_postfix = option
+	folder = f.replace('ANN_out_','').replace('.tar','')
 
-	with tarfile.open('ANN_out' + path_postfix + '.tar') as tar:
+	with tarfile.open(f) as tar:
 		tar.extractall(path='')
 
 	print('Opening pickle jar')
@@ -211,38 +195,40 @@ for option in ['']:
 	model_prediction = pickle.load(open(path_prefix + 'model_prediction.pickle','rb'))
 	adversary_prediction = pickle.load(open(path_prefix + 'adversary_prediction.pickle','rb'))
 	target_adversarial_validation = pickle.load(open(path_prefix + 'target_adversarial_validation.pickle','rb'))
-	#l_test = pickle.load(open(path_prefix + 'losses_test.pickle','rb'))
-	#l_train = pickle.load(open(path_prefix + 'losses_train.pickle','rb'))
+	l_test = pickle.load(open(path_prefix + 'losses_test.pickle','rb'))
+	l_train = pickle.load(open(path_prefix + 'losses_train.pickle','rb'))
 
 	#print('History:')
 	#print(l_test)
+
+	os.system('mkdir ' + folder)
+	os.chdir(folder)
 
 	fpr, tpr, threshold = roc_curve(target_validation, model_prediction)
 	auc_var = auc(fpr, tpr)
 	adversary_fpr, adversary_tpr, adversary_threshold = roc_curve(target_adversarial_validation, adversary_prediction)
 
 	loss = []
-	model_1_loss = []
+	model_2_loss = []
 	model_loss = []
 	val_loss = []
-	val_model_1_loss = []
+	val_model_2_loss = []
 	val_model_loss = []
 	for el in model_history_array:
 		loss.append(el['loss'])
-		model_1_loss.append(el['model_1_loss'])
+		model_2_loss.append(el['model_2_loss'])
 		model_loss.append(el['model_loss'])
 		val_loss.append(el['val_loss'])
-		val_model_1_loss.append(el['val_model_1_loss'])
+		val_model_2_loss.append(el['val_model_2_loss'])
 		val_model_loss.append(el['val_model_loss'])
-	for el in model_1_loss:
-	#	print(type(el))
-	#	print(type(el[0]))
-		model_1_loss1 = [-(x[0]) for x in model_1_loss]
-		val_model_1_loss1 = [-(x[0]) for x in model_1_loss]
+	for el in model_2_loss:
+		model_2_loss1 = [-(x[0]) for x in model_2_loss]
+		val_model_2_loss1 = [-(x[0]) for x in model_2_loss]
 
 	#adversary_auc = auc(adversary_fpr, adversary_tpr)
 	plot_sep_all()
-	plot_losses_2()
 	plot_roc()
 	plot_losses_combined()
 	print('All gone')
+
+	os.chdir('..')
