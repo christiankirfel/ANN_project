@@ -1,4 +1,5 @@
 # ignore output
+archive/
 output/
 output*/
 gpu_out/
@@ -14,6 +15,7 @@ tempout/
 # ignore VSC files
 .vscode/
 __pycache__
+*.code-workspace
 
 # ignore any root files
 *.root
@@ -21,7 +23,7 @@ __pycache__
 # ignore logs
 *log*.txt
 *.log
-log_whk_ANN/
+logs/
 
 # random testing stuff
 *_test/

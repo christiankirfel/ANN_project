@@ -1,10 +1,13 @@
 #Loading base packages
-import os
+import os, subprocess
 import math
 import sys
 import configparser as cfg
 import pickle
+import logging
 from datetime import datetime
+import random as rn
+import time
 
 #Loading tensorflow
 #Setting some options for BAF
@@ -12,12 +15,11 @@ import tensorflow as tf
 NUM_THREADS=1
 tf.config.threading.set_inter_op_parallelism_threads(NUM_THREADS)
 tf.config.threading.set_intra_op_parallelism_threads(NUM_THREADS)
-tf.config.optimizer.set_jit(True)
 
 from tensorflow.keras.models import Sequential, Model
 from tensorflow.keras.layers import Dense, Input, BatchNormalization, Dropout
 from tensorflow.keras import metrics
-from tensorflow.keras.optimizers import SGD
+from tensorflow.keras.optimizers import SGD, Adagrad, Adam
 from tensorflow.keras.losses import binary_crossentropy
 
 #Loading sklearn for data processing & analysis
@@ -34,6 +36,11 @@ import numpy as np
 #Loading packages needed for plottting
 import matplotlib.pyplot as plt
 
+try:
+	from guppy import hpy
+except:
+	pass
+
 #Defining colours for the plots
 #The colours were chosen using the xkcd guice
 #color_tW = '#66FFFF'
@@ -49,7 +56,6 @@ color_tt2 = '#FF6600'
 
 
 #Setting up the output directories
-#output_path = '/cephfs/user/s6chkirf/whk_adversarialruns_' + sys.argv[1] + '_' + sys.argv[2] + '_' + sys.argv[3] + '_' + sys.argv[4] + '_' + sys.argv[5] + '_' +sys.argv[6] + '_' + sys.argv[7] + '/'
 output_path = '/cephfs/user/s6niboei/out2/'
 array_path = output_path + 'arrays/'
 if not os.path.exists(output_path):
@@ -64,50 +70,41 @@ plt.ticklabel_format(style='sci', axis='y', scilimits=(0,0))
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #This is the main class for the adversarial neural network setup
 class ANN_environment(object):
+	'''
+	Class implementing an Adversarial Neural Network used for analysis of Wt data
+	'''
 
 	def __init__(self,args):
 		""" opens files, loads config and initializes variables """
+
+		self.time_start = datetime.now().strftime(r"%y%m%d_%H_%M_%S")
+		self.time1 = time.time()
+		#logging.debug('Setting up ANN')
+		
 		#load the config
-		self.time_start = datetime.now().strftime("%H_%M_%S")
-		self.custom_config = ''
-		self.config_path = "config_whk_ANN.ini"
-		self.config = cfg.ConfigParser(inline_comment_prefixes="#")
-		try:
-			self.config.read(self.config_path)
-		except:
-			print('[WARNING] No config file found. Using defaults')
-			self.config.read("default_whk_ANN.ini")
-		self.config = self.config['General']
-
-		#TODO load additional config for HTCondor/BAF
-		if len(args) > 1:
-			for x in range(1,len(args)):
-				try:
-					temp = str(args[x]).split('=')
-				except:
-					print('[ERROR] Additional config should be in the format Option=Value')
-					sys.exit(1)
-				self.config[temp[0]] = temp[1]
-				self.custom_config = '_' + temp[0] + '_' + temp[1]
-
-			#if len(args) % 2 == 1:
-			#	for x in range(1,len(args),2):
-			#		if self.config.get(str(args[x]))==None:
-			#			print('[ERROR] Unknown key ' + str(args[x]))
-			#		self.config[str(args[x])] = str(args[x+1])
-				print('Custom config: ' + str(temp[0]) + '=' + str(temp[1]))
-
-		#Use the config file for everything if possible
-		#A list of more general settings
+		self.load_config()
+		self.log_file_dir = self.config['LogFileDir']
+		self.setup_logging()
+		self.load_custom_config(args)
 		self.print_config()
 
-		with open("variables.txt","r") as f:
+		if self.config['UseTop'] == '1':
+			with open(f"/cephfs/user/s6niboei/BAF_top_{self.time_start}",'w') as f:
+				pass
+
+		with open(f"variables_{self.config['Region']}.txt","r") as f:
 			self.variables = np.asarray([line.strip() for line in f])
+
+		self.root_file_dir = self.config['RootFileDir']
+
 		#The seed is used to make sure that both the events and the labels are shuffeled the same way because they are not inherently connected.
 		self.seed = int(self.config['Seed'])
+		np.random.seed(self.seed)
+		rn.seed(self.seed)
+		tf.random.set_seed(self.seed)
 		#All information necessary for the input
 		#The exact data and targets are set late
-		self.input_path = self.config['InputPath']
+		self.input_path = self.config['InputPath'] + '_' + self.config['Region']+'.root'
 		self.signal_sample = self.config['SignalSample']
 		self.background_sample = self.config['BackgroundSample']
 		self.signal_systematics_sample = self.config['SignalSystematicsSample']
@@ -147,23 +144,50 @@ class ANN_environment(object):
 		self.adversary_layers = int(self.config['AdversaryLayers'])
 		self.adversary_nodes = int(self.config['AdversaryNodes'])
 		#Setup of the networks, loss and optimisation
-		#original lr/momentum sys.argv 123456
-		#0.01 0.001 0.01 0.3 0.3 0.3 0.5
-		self.discriminator_optimizer = SGD(lr = float(self.config['DiscriminatorLearningRate']), momentum = float(self.config['DiscriminatorMomentum']))
+		opt = self.config['DiscriminatorOptimizer']
+		if opt == 'SGD':
+			self.discriminator_optimizer = SGD(lr = float(self.config['DiscriminatorLearningRate']), momentum = float(self.config['DiscriminatorMomentum']))
+		elif opt == 'Adagrad':
+			self.discriminator_optimizer = Adagrad(learning_rate = float(self.config['DiscriminatorLearningRate']), initial_accumulator_value = 0.1, epsilon = 1e-07)
+		elif opt == 'Adam':
+			self.discriminator_optimizer = Adam(learning_rate = float(self.config['DiscriminatorLearningRate']), beta_1 = 0.9, beta_2 = 0.999, epsilon = 1e-07)
+		else:
+			logging.error('Not a valid optimizer. Available: SGD, Adagrad, Adam')
+			sys.exit(1)
 		self.discriminator_dropout = float(self.config['DiscriminatorDropout'])
 		self.discriminator_inputdropout = float(self.config['DiscriminatorInputDropout'])
  		#self.discriminator_loss = binary_crossentropy
-
-		self.adversary_optimizer = SGD(lr = float(self.config['AdversaryLearningRate']), momentum = float(self.config['AdversaryMomentum']))
+		opt = self.config['AdversaryOptimizer']
+		if opt == 'SGD':
+			self.adversary_optimizer = SGD(lr = float(self.config['AdversaryLearningRate']), momentum = float(self.config['AdversaryMomentum']))
+		elif opt == 'Adagrad':
+			self.adversary_optimizer = Adagrad(learning_rate = float(self.config['AdversaryLearningRate']), initial_accumulator_value = 0.1, epsilon = 1e-07)
+		elif opt == 'Adam':
+			self.adversary_optimizer = Adam(learning_rate = float(self.config['AdversaryLearningRate']), beta_1 = 0.9, beta_2 = 0.999, epsilon = 1e-07)
+		else:
+			logging.error('Not a valid optimizer. Available: SGD, Adagrad, Adam')
+			sys.exit(1)
 		self.adversary_dropout = float(self.config['AdversaryDropout'])
+		self.adversary_initializer = self.config['AdversaryInitializer']
  		#self.adversary_loss = binary_crossentropy
+		opt = self.config['CombinedOptimizer']
+		if opt == 'SGD':
+			self.combined_optimizer = SGD(lr = float(self.config['CombinedLearningRate']), momentum = float(self.config['CombinedMomentum']))
+		elif opt == 'Adagrad':
+			self.combined_optimizer = Adagrad(learning_rate = float(self.config['CombinedLearningRate']), initial_accumulator_value = 0.1, epsilon = 1e-07)
+		elif opt == 'Adam':
+			self.combined_optimizer = Adam(learning_rate = float(self.config['CombinedLearningRate']), beta_1 = 0.9, beta_2 = 0.999, epsilon = 1e-07)
+		else:
+			logging.error('Not a valid optimizer. Available: SGD, Adagrad, Adam')
+			sys.exit(1)
 
-		self.combined_optimizer = SGD(lr = float(self.config['CombinedLearningRate']), momentum = float(self.config['CombinedMomentum']))
+		self.combined_epochs = int(self.config['CombinedEpochs'])
 
 		self.validation_fraction = float(self.config['ValidationFraction'])
 
 		self.batch_size = int(self.config['BatchSize'])
 		self.verbosity = int(self.config['Verbosity'])
+		
 
 		#The following set of variables is used to evaluate the result
 		#fpr = false positive rate, tpr = true positive rate
@@ -175,14 +199,97 @@ class ANN_environment(object):
 		self.losses_test = {"L_f": [], "L_r": [], "L_f - L_r": []}
 		self.losses_train = {"L_f": [], "L_r": [], "L_f - L_r": []}
 		self.lambda_value = float(self.config['LambdaValue'])
-		self.use_last_layer = bool(self.config['UseLastLayer'])
 
+		#
+		if self.config['UseLastLayer'] == '0':
+			self.use_last_layer = False
+		else:
+			self.use_last_layer = True
+		if self.config['TrainAdversarial'] == '0':
+			self.train_adversarial = False
+		else:
+			self.train_adversarial = True
+		if self.config['UseEarlyStopping'] == '0':
+			self.use_early_stopping = False
+			logging.debug('Not using early stopping')
+		else:
+			self.use_early_stopping = True
+			logging.debug('Using early stopping')
+		self.early_stopping_mode = self.config['EarlyStoppingMode']
+		self.early_stopping_epochs = int(self.config['EarlyStoppingEpochs'])
+		if not (self.early_stopping_epochs % 2) == 0:
+			logging.error('Early stopping epochs must be even')
+			sys.exit(1)
+		print(f'EARLY STOPPING {self.use_early_stopping}')
+		self.losses_es = []
 
-		#self.logger = ""
-		#self.logger.append('Tensorflow ' + os.system("python3 -c 'import tensorflow; print(tf.__version__)'") + '\n')
-		#self.logger.append('Keras ' + keras.__version__ + '\n')
-		#self.logger.append('Batch Size ' + self.config['BatchSize'] + '\n')
+		if self.config['UseXLA'] == '1':
+			tf.config.optimizer.set_jit(True)
+		else:
+			tf.config.optimizer.set_jit(False)
 
+		if self.config['UseGuppy'] == '1':
+			from guppy import hpy
+
+		logging.debug('Network initialized')
+
+	def load_config(self):
+		"""
+		Loads the initial config settings
+		"""
+		self.custom_config = ''
+		self.config_path = "config_ANN.ini"
+		self.config = cfg.ConfigParser(inline_comment_prefixes="#")
+		self.config.read(self.config_path)
+		self.config = self.config['General']
+
+	def setup_logging(self):
+		"""
+		Sets up the logging system
+		"""
+
+		log_file_dir = self.config['LogFileDir']
+		log_file_name = f'log_{self.time_start}.txt'
+		fname = f'{log_file_dir}{log_file_name}'
+		# make sure the file exists
+		os.system(f'touch {fname}')
+
+		debug_levels = {'DEBUG': logging.DEBUG,
+						'INFO': logging.INFO,
+						'WARNING': logging.WARNING,
+						'ERROR': logging.ERROR}
+
+		logging.basicConfig(filename=fname, filemode='a', level=debug_levels[self.config['DebugLevel']], format = '%(asctime)s %(levelname)s:%(message)s', datefmt='%m/%d/%Y %H:%M:%S')
+
+	def load_custom_config(self, args):
+		"""
+		Loads additional config as specified by the command line arguments.
+		Arguments should be specified in the format Option=Value
+		"""
+		logging.debug('Loading custom config')
+		logging.debug('Reading arguments:')
+		for el in args:
+			logging.debug(str(el))
+
+		if len(args) > 1:
+			for x in range(1,len(args)):
+				try:
+					temp = str(args[x]).split('=')
+				except:
+					logging.error('Additional config should be in the format Option=Value\n')
+					sys.exit(1)
+				if not temp[0] in self.config:
+					logging.error('Key ' + temp[0] + ' could not be found in config\n')
+					sys.exit()
+				self.config[temp[0]] = temp[1]
+				self.custom_config += '_' + temp[0] + '_' + temp[1]
+
+			#if len(args) % 2 == 1:
+			#	for x in range(1,len(args),2):
+			#		if self.config.get(str(args[x]))==None:
+			#			print('[ERROR] Unknown key ' + str(args[x]))
+			#		self.config[str(args[x])] = str(args[x+1])
+				logging.info('Custom config: ' + str(temp[0]) + '=' + str(temp[1]))
 
 	def initialize_sample(self):
 		"""
@@ -193,16 +300,18 @@ class ANN_environment(object):
 		#Signal and background are needed for the classification task, signal and systematic for the adversarial part
 		#In this first step the events are retrieved from the tree, using the chosen set of variables
 
-		#The numpy conversion is redundant
-		self.events_signal = self.signal_tree.pandas.df(self.variables)#.to_numpy()
-		self.events_background = self.background_tree.pandas.df(self.variables)#.to_numpy()
-		self.events_systematic = self.signal_systematics_tree.pandas.df(self.variables)#.to_numpy()
+		logging.debug('Initizializing samples')
+
+		#Extract the variables used from the trees into pandas dataframes
+		self.events_signal = self.signal_tree.pandas.df(self.variables)
+		self.events_background = self.background_tree.pandas.df(self.variables)
+		self.events_systematic = self.signal_systematics_tree.pandas.df(self.variables)
 		self.events_bkg_systematic = self.background_systematics_tree.pandas.df(self.variables)#bkgsys
 
 		#Setting up the weights. The weights for each tree are stored in 'weight_nominal'
-		self.weight_signal = self.signal_tree.pandas.df('weight_nominal')#.to_numpy()
-		self.weight_background = self.background_tree.pandas.df('weight_nominal')#.to_numpy()
-		self.weight_systematic = self.signal_systematics_tree.pandas.df('weight_nominal')#.to_numpy()
+		self.weight_signal = self.signal_tree.pandas.df('weight_nominal')
+		self.weight_background = self.background_tree.pandas.df('weight_nominal')
+		self.weight_systematic = self.signal_systematics_tree.pandas.df('weight_nominal')
 		self.weight_bkg_systematic = self.background_systematics_tree.pandas.df('weight_nominal')#bkgsys
 
 		#Rehsaping the weights
@@ -213,23 +322,30 @@ class ANN_environment(object):
 		self.weight_bkg_systematic = np.reshape(self.weight_bkg_systematic, (len(self.events_bkg_systematic), 1))#bkgsys
 
 		#Normalisation to the eventcount can be used instead of weights, especially if using data
-		self.norm_signal = np.reshape([1./float(len(self.events_signal)) for x in range(len(self.events_signal))], (len(self.events_signal), 1))
-		self.norm_background = np.reshape([1./float(len(self.events_background)) for x in range(len(self.events_background))], (len(self.events_background), 1))
+		#self.norm_signal = np.reshape([1./float(len(self.events_signal)) for x in range(len(self.events_signal))], (len(self.events_signal), 1))
+		#self.norm_background = np.reshape([1./float(len(self.events_background)) for x in range(len(self.events_background))], (len(self.events_background), 1))
 
 		#Calculating the weight ratio to scale the signal weight up. This tries to take the high amount of background into account
 		self.weight_ratio = ( self.weight_signal.sum() + self.weight_systematic.sum() )/ (self.weight_background.sum() + self.weight_background_adversarial.sum())#bkgsys
 		self.weight_signal = self.weight_signal / self.weight_ratio
 		self.weight_systematic = self.weight_systematic / self.weight_ratio
 
-
 		#Setting up the targets
 		#target combined is used to make sure the systematics are seen as signal for the first net in the combined training
+		'''
+			D	A
+		Wt	1	1
+		tt	0	1
+		Wts	1	0
+		tts 0	0
+		'''
 		self.target_signal = np.reshape([1 for x in range(len(self.events_signal))], (len(self.events_signal), 1))
 		self.target_background = np.reshape([0 for x in range(len(self.events_background))], (len(self.events_background), 1))
 		self.target_systematic = np.reshape([1 for x in range( len( self.events_systematic))], (len(self.events_systematic), 1))
 		self.target_bkg_systematic = np.reshape([0 for x in range(len(self.events_bkg_systematic))], (len(self.events_bkg_systematic), 1))#bkgsys
 		self.target_systematic_adversarial = np.reshape([0 for x in range( len( self.events_systematic))], (len(self.events_systematic), 1))
-		self.target_background_adversarial = np.reshape( np.random.randint(2, size =len( self.events_background)), ((len(self.events_background)), 1))#bkgsys
+		self.target_background_adversarial = np.reshape([1 for x in range(len(self.events_background))], (len(self.events_background),1))#bkgsys
+		#self.target_background_adversarial = np.reshape( np.random.randint(2, size =len( self.events_background)), ((len(self.events_background)), 1))
 		self.target_bkg_systematic_adversarial = np.reshape([0 for x in range(len(self.events_bkg_systematic))], (len(self.events_bkg_systematic), 1))
 
 		#The samples and corresponding targets are now split into a sample for training and a sample for testing. Keep in mind that the same random seed should be used for both splits
@@ -239,13 +355,15 @@ class ANN_environment(object):
 		#Splitting the weights
 		self.weight_training, self.weight_validation = train_test_split(np.concatenate((self.weight_signal, self.weight_systematic, self.weight_background, self.weight_bkg_systematic)), test_size = self.validation_fraction, random_state = self.seed)
 		self.weight_adversarial, self.weight_adversarial_validation = train_test_split(np.concatenate((self.weight_signal, self.weight_systematic, self.weight_background_adversarial, self.weight_bkg_systematic)), test_size = self.validation_fraction, random_state = self.seed)
-		self.norm_training, self.norm_validation = train_test_split(np.concatenate((self.norm_signal, self.norm_background)), test_size = self.validation_fraction, random_state = self.seed)
+		#self.norm_training, self.norm_validation = train_test_split(np.concatenate((self.norm_signal, self.norm_background)), test_size = self.validation_fraction, random_state = self.seed)
 
 		#Setting up a scaler
 		#A scaler makes sure that all variables are normalised to 1 and have the same order of magnitude for that reason
 		scaler = StandardScaler()
 		self.sample_training = scaler.fit_transform(self.sample_training)
 		self.sample_validation = scaler.fit_transform(self.sample_validation)
+
+		logging.debug('Samples initialized')
 
 	def build_discriminator(self):
 		'''---------------------------------------------------------------------------------------------------------------------------------------
@@ -266,7 +384,7 @@ class ANN_environment(object):
 		#(experimental) Idea: High dropout in the first layer effectively regularizes variables. Untested.
 		self.layer_discriminator = Dropout(self.discriminator_inputdropout)(self.layer_discriminator)
 		for _ in range(self.discriminator_layers -1):
-			#Placeholder iterator name so pylint doesn't complain
+			# add hidden layers in a loop with batch normalization and dropout for each
 			self.layer_discriminator = Dense(self.discriminator_nodes, activation = "elu")(self.layer_discriminator)
 			self.layer_discriminator = BatchNormalization()(self.layer_discriminator)
 			self.layer_discriminator = Dropout(self.discriminator_dropout)(self.layer_discriminator)
@@ -276,8 +394,9 @@ class ANN_environment(object):
 		self.model_discriminator.compile(loss = "binary_crossentropy", weighted_metrics = [metrics.binary_accuracy], optimizer = self.discriminator_optimizer)
 		self.model_discriminator.summary()
 
-		self.adversary_input_model = Model(inputs = [self.network_input], outputs = [self.model_discriminator.get_layer('dense_4').output])
-		self.adversary_input_model.summary()
+		self.adversary_input_model = Model(inputs = [self.network_input], outputs = [self.model_discriminator.get_layer(f'dense_{self.discriminator_layers-1}').output])
+		#self.adversary_input_model.compile(loss = 'b')
+		#self.adversary_input_model.summary()
 
 	def build_adversary(self):
 		'''
@@ -288,20 +407,23 @@ class ANN_environment(object):
 		In a loop the deep layers are created
 		It ends in a single sigmoid layer
 		'''
+		logging.debug('Building adversary')
 		#This is where the adversary is initialized
 		#It is just another classifier
 
 		self.adversary_input = Input( shape = (self.input_dimension) )
 		# decide whether to use last or second to last layer
+		#Idea: If the second to last layer is used as an input to the adversary, that might make it better by giving it more info, instead of just the single node output of the discriminator
 		if self.use_last_layer:
 			self.layer_adversary = self.model_discriminator(self.network_input)
 		else:
 			self.layer_adversary = self.adversary_input_model(self.network_input)
-		self.layer_adversary = Dense( self.adversary_nodes, activation = 'elu')(self.layer_adversary)
+		self.layer_adversary = Dense( self.adversary_nodes, activation = 'elu', kernel_initializer = self.adversary_initializer)(self.layer_adversary)
 		self.layer_adversary = BatchNormalization()(self.layer_adversary)
 		self.layer_adversary = Dropout(self.adversary_dropout)(self.layer_adversary)
+		#add hidden layers in a loop with batch normalization and dropout
 		for _ in range(self.adversary_layers - 1):
-			self.layer_adversary = Dense(self.adversary_nodes, activation = "elu")(self.layer_adversary)
+			self.layer_adversary = Dense(self.adversary_nodes, activation = "elu", kernel_initializer = self.adversary_initializer)(self.layer_adversary)
 			self.layer_adversary = BatchNormalization()(self.layer_adversary)
 			self.layer_adversary = Dropout(self.adversary_dropout)(self.layer_adversary)
 		self.layer_adversary = Dense( 1, activation = "sigmoid")(self.layer_adversary)
@@ -313,6 +435,7 @@ class ANN_environment(object):
 	def build_combined_training(self):
 		'''The discriminator and adversary are added up to a single model running on a combined loss function'''
 
+		logging.debug('Building combined training')
 		def make_losses_adversary():
 			'''This function creates the loss function used by the adversary'''
 			def losses_adversary(y_true, y_pred):
@@ -321,13 +444,13 @@ class ANN_environment(object):
 
 		self.model_combined = Model(inputs = self.adversary_input, outputs = [self.model_discriminator(self.adversary_input), self.model_adversary(self.adversary_input)])
 		#Compiling a model with multiple loss functions lets Keras use the sum by default
-		self.model_combined.compile( loss = ['binary_crossentropy', make_losses_adversary()], optimizer = self.combined_optimizer)
+		self.model_combined.compile(loss = ['binary_crossentropy', make_losses_adversary()], optimizer = self.combined_optimizer, metrics = ['accuracy'])
 	
 	def run_adversarial_training(self):
 		'''
 		This function runs the actual adversarial training by alternating between training the discriminator and adversary networks
 		'''
-
+		logging.debug('Running adversarial training')
 
 		def make_trainable(network, flag):
 			#helper function
@@ -339,28 +462,43 @@ class ANN_environment(object):
 		#run this however many times needed, every iterations is one epoch for each network
 		for iteration in range(self.training_iterations):
 
-
-			print('Running training: Iteration ' + str(iteration+1) + ' of ' + str(self.training_iterations))
+			logging.info(f'Iteration {iteration+1} of {self.training_iterations}')
 
 			#Only save losses every 5 iterations
 			#if iteration%5 == 0 or iteration == (self.training_iterations-1):
 			
+			if self.train_adversarial or iteration == 0:
+				make_trainable(self.model_discriminator, True)
+				make_trainable(self.model_adversary, False)
 
-			make_trainable(self.model_discriminator, True)
-			make_trainable(self.model_adversary, False)
-
-			self.model_history = self.model_combined.fit(self.sample_training, [self.target_training, self.target_adversarial], validation_data = (self.sample_validation, [self.target_validation, self.target_adversarial_validation], [self.weight_validation.ravel(), self.weight_adversarial_validation.ravel()]), epochs=1, batch_size = self.batch_size, sample_weight = [self.weight_training.ravel(),self.weight_adversarial.ravel()], verbose = self.verbosity)
+			logging.debug('Training combined model')
+			self.model_history = self.model_combined.fit(self.sample_training, [self.target_training, self.target_adversarial], validation_data = (self.sample_validation, [self.target_validation, self.target_adversarial_validation], [self.weight_validation.ravel(), self.weight_adversarial_validation.ravel()]), epochs = self.combined_epochs, batch_size = self.batch_size, sample_weight = [self.weight_training.ravel(),self.weight_adversarial.ravel()], verbose = self.verbosity)
 			self.model_history_array.append(self.model_history.history)
-			print('MODELHISTORY')
-			print(self.model_history.history)
 
-			make_trainable(self.model_discriminator, False)
-			make_trainable(self.model_adversary, True)
+			if self.train_adversarial:
+				make_trainable(self.model_discriminator, False)
+				make_trainable(self.model_adversary, True)
 
-			self.adversary_history = self.model_adversary.fit(self.sample_training, self.target_adversarial, epochs=1, batch_size = self.batch_size, sample_weight = self.weight_training.ravel(), verbose = self.verbosity)
-			self.adversary_history_array.append(self.adversary_history.history)
+				logging.debug('Training adversary')
+				self.adversary_history = self.model_adversary.fit(self.sample_training, self.target_adversarial, epochs=1, batch_size = self.batch_size, sample_weight = self.weight_training.ravel(), verbose = self.verbosity)
+				self.adversary_history_array.append(self.adversary_history.history)
+			
+			# Check for early stopping if it is used
+			if self.use_early_stopping:
+				if self.early_stopping():
+					break
+			
+			# Memory debugging
+			if self.config['UseGuppy'] == '1':
+				h = hpy()
+				hp = h.heap()
+				logging.debug(hp)
+			#if self.config['UseTop'] == '1':
+		#		#logging.debug(subprocess.call('top -n1', shell=True))
+		#		with open(f"/cephfs/user/s6niboei/BAF_top_{self.time_start}",'a') as f:
+		#			subprocess.call(['top','-n','1','b'], shell=True, stdout=f)
 
-			self.save_losses(iteration, self.model_combined)
+			#self.save_losses(iteration, self.model_combined)
 
 	def pretrain_adversary(self):
 		'''
@@ -373,15 +511,15 @@ class ANN_environment(object):
 		'''
 		This function pretrains the discriminator network, this improves the adversarial training speed greatly
 		'''
-	
-		print('Pretraining discriminator with ' + str(self.discriminator_epochs) + ' epochs.')
+		
+		logging.debug('Pretraining discriminator with ' + str(self.discriminator_epochs) + ' epochs.')
 
 		#print(self.target_training[12:500])
 		#print(self.target_training[-1:-100])
 
 		self.model_discriminator.summary()
 
-		self.discriminator_history = self.model_discriminator.fit(self.sample_training, self.target_training.ravel(), epochs=self.discriminator_epochs, batch_size = int(self.config['BatchSize']), sample_weight = self.weight_training.ravel(), validation_data = (self.sample_validation, self.target_validation, self.weight_validation.ravel()))
+		self.discriminator_history = self.model_discriminator.fit(self.sample_training, self.target_training.ravel(), epochs=self.discriminator_epochs, batch_size = int(self.config['BatchSize']), sample_weight = self.weight_training.ravel(), validation_data = (self.sample_validation, self.target_validation, self.weight_validation.ravel()), verbose = self.verbosity)
 		self.discriminator_history_array.append(self.discriminator_history)
 		print(self.discriminator_history.history.keys())
 
@@ -389,7 +527,51 @@ class ANN_environment(object):
 		#    discriminator_history = self.model_discriminator.fit(self.sample_training, self.target_training, epochs=self.discriminator_epochs, validation_data = (self.sample_validation, self.target_validation))
 		#    adversary_history = self.model_combined.fit(self.adversarial_training, [self.combined_target, self.adversarial_target], epochs=self.adversary_epochs)
 
+	def early_stopping(self):
+		'''
+		Stops the training early if the loss stops improving
+		'''
+		self.losses_es.append(self.model_history.history['val_loss'][0])
+		logging.debug('Checking losses for early stopping')
+		logging.debug(self.losses_es)
+		los_len = len(self.losses_es)
+		#collect a list with 10 last losses
+		if los_len<=self.early_stopping_epochs:
+			return False
+		elif los_len==(self.early_stopping_epochs+1):
+			self.losses_es.pop(0)
+			first = self.losses_es[0]
+			last = self.losses_es[self.early_stopping_epochs-1]
+			avg = sum(self.losses_es)/self.early_stopping_epochs
+			first5 = sum(self.losses_es[:(self.early_stopping_epochs/2)])
+			last5 = sum(self.losses_es[-(self.early_stopping_epochs/2):])
+			if self.early_stopping_mode == 'increase':
+				if last > avg and first < avg and first5 < last5:
+					#stop the training if the loss is going up
+					logging.info('Loss is increasing, stopping training')
+					return True
+				logging.debug('Loss decreasing, keep training')
+				return False
+			elif self.early_stopping_mode == '0.01':
+				if (first5 / last5) < 1.0001:
+					logging.info('Loss is barely decreasing, stopping training')
+					return True
+				logging.debug('Loss is decreasing, keep training')
+				return False
+			else:
+				logging.error('Invalid early stopping mode')
+				return True
+		else:
+			logging.error('Too many items in list in early_stopping')
+
+
+
 	def predict_model(self):
+		'''
+		Runs all the necessary prediction on the trained model for evaluating the performance and later use
+		'''
+
+		logging.debug('Predicting model')
 
 		self.model_prediction = self.model_discriminator.predict(self.sample_validation, batch_size = self.batch_size).ravel()
 		self.fpr, self.tpr, self.threshold = roc_curve(self.target_validation, self.model_prediction)
@@ -402,8 +584,11 @@ class ANN_environment(object):
 		print('Discriminator AUC', self.auc)
 		print('Adversary AUC', self.adversary_auc)
 
-#----------------------------------------------------------------------------------------------Plot structure------------------------------------------------------------------------------------------------------------
+	#----------------------------------------------------------------------------------------------Plot structure------------------------------------------------------------------------------------------------------------
 	def plot_losses(self, i, l_test, l_train):
+		'''
+		Old way of plotting the losses of the network, using a separate network.evaluate call
+		'''
 		print('Printing losses')
 
 		ax1 = plt.subplot(311) 
@@ -446,6 +631,10 @@ class ANN_environment(object):
 
 	#This function is inactive for now
 	def save_losses(self, i, network):
+		'''
+		Old function to get the losses of the network from a separate evaluate call instead of during training.
+		This gets rid of the train/test offset caused by dropout but makes the network run significantly slower
+		'''
 		#l_test = network.evaluate(self.sample_training, [self.target_training, self.target_adversarial], sample_weight = [self.weight_training.ravel(),self.weight_adversarial.ravel()], batch_size = int(self.config['BatchSize']))
 		#l_train = network.evaluate(self.sample_validation, [self.target_validation, self.target_adversarial_validation], sample_weight = [self.weight_validation.ravel(), self.weight_adversarial_validation.ravel()], batch_size = int(self.config['BatchSize']))
 		l_test = network.evaluate(self.sample_training, [self.target_training, self.target_adversarial], batch_size = int(self.config['BatchSize']))
@@ -465,9 +654,10 @@ class ANN_environment(object):
 		if i == (self.training_iterations-1):
 		 self.plot_losses(i, self.losses_test, self.losses_train)
 
-
-
 	def plot_roc(self):
+		'''
+		Plots the ROC curve
+		'''
 		plt.title('Receiver Operating Characteristic')
 		plt.plot(self.fpr, self.tpr, 'g--', label='$AUC_{train}$ = %0.2f'% self.auc)
 		plt.legend(loc='lower right')
@@ -483,6 +673,9 @@ class ANN_environment(object):
 		plt.gcf().clear()
 
 	def plot_separation(self):
+		'''
+		Plots the separation between signal and background events
+		'''
 		self.signal_histo = []
 		self.background_histo = []
 		for i in range(len(self.sample_validation)):
@@ -506,7 +699,6 @@ class ANN_environment(object):
 		plt.gcf().savefig(output_path + 'separation_discriminator.png')
 		#plt.show()
 		plt.gcf().clear()
-
 
 	def plot_separation_adversary(self):
 		plt.title('Adversary Response')
@@ -579,33 +771,14 @@ class ANN_environment(object):
 		plt.gcf().savefig(output_path + 'acc.png')
 		plt.gcf().clear()
 
-
-	def fill_jar(self):
+	def save_tar(self):
 		'''
-		save the result objects so they can be looked at and plotted at a later date
-		for the love of god make this less janky when theres time
+		Saves some important bits, including predictions and stuff for plotting and tars it for easy transport
 		'''
-		with open(output_path + 'sample_validation.jar','wb') as f:
-			pickle.dump(self.sample_validation, f)
-		with open(output_path + 'target_validation.jar','wb') as f:
-			pickle.dump(self.target_validation, f)
-		with open(output_path + 'model_prediction.jar','wb') as f:
-			pickle.dump(self.model_prediction, f)
-		with open(output_path + 'target_adversarial_validation.jar','wb') as f:
-			pickle.dump(self.target_adversarial_validation, f)
-		#pickle.dump(self.model_history.history, open('history_dict.jar','wb'))
-		#pickle.dump(self.adversary_history.history, open('adversary_history_dict.jar','wb'))
-		#pickle.dump(self.l_test_s, open('l_test.jar','wb'))
-		#pickle.dump(self.l_train_s, open('l_train.jar','wb'))
-		#with open('tpr.jar','wb') as f:
-			#pickle.dump(self.tpr,f)
-		#with open('fpr.jar','wb') as f:
-		#	pickle.dump(self.fpr,f)
-		#with open('auc.jar','wb') as f:
-		#	pickle.dump(self.auc,f)
 
-	def save_as_root(self):
-	
+		outfileName = 'ANN_out' + self.custom_config + '_' + self.time_start
+		logging.debug(f'Saving tar file: {outfileName}.tar')
+
 		import pickle
 		#pickle.dump(self.model_history.history, open('history.pickle', 'wb'))
 		pickle.dump(self.sample_validation, open('sample_validation.pickle','wb'))
@@ -617,34 +790,87 @@ class ANN_environment(object):
 		pickle.dump(self.losses_train,open('losses_train.pickle','wb'))
 		pickle.dump(self.model_history_array, open('model_history_array.pickle','wb'))
 		pickle.dump(self.adversary_history_array, open('adversary_history_array.pickle','wb'))
+		pickle.dump(self.discriminator_history.history, open('discriminator_history.pickle','wb'))
 
-		with open('ANN_out' + self.custom_config + '_' + self.time_start + '.txt','w') as f:
+		#writes the options used in this net into a separate text file
+		with open('config.txt','w') as f:
 			for key in self.config:
-				f.write(key + ': ' + self.config[key])
+				f.write(key + ': ' + self.config[key] + '\n')
 		
+		with open('time.txt','w') as f:
+			f.write(f'{time.time() - self.time1} seconds')
+
 		import tarfile
 		import glob
-		tar = tarfile.open('out/ANN_out' + self.custom_config + '_' + self.time_start + '.tar','w:gz')
+		tar = tarfile.open('out/' + outfileName + '.tar','w:gz')
 		#tar = tarfile.open('/cephfs/user/s6niboei/ANN_out_' + datetime.now().strftime("%H_%M_%S") + '.tar', 'w:gz')
 		for f in glob.glob('*.pickle'):
 			tar.add(f)
-			tar.add('ANN_out' + self.custom_config + '_' + self.time_start + '.txt')
+		for f in glob.glob('*.txt'):
+			tar.add(f)
+
 		tar.close()
 
+		logging.debug('Tar file written')
 
+	def save_as_root(self):
+		'''
+		Saves input data as well as model prediction to a single root file for further use
+		'''
 
+		outfileName = 'ANN_out' + self.custom_config + '_' + self.time_start
+		logging.debug(f'Saving root file: {outfileName}.root')
 
-	def types(self):
-		print('sample_validation: ' + str(type(self.sample_validation)))
-		print('model_prediction: ' + str(type(self.model_prediction)))
-		print('model_history: ' + str(type(self.model_history)))
-		print('history.history: ' +str(type(self.model_history.history)))
+		# split up the single prediction list
+		signal_histo = []
+		background_histo = []
+		signal_sys_histo = []
+		background_sys_histo = []
+		for i in range(len(self.sample_validation)):
+			if self.target_validation[i] == 1 and self.target_adversarial_validation[i] == 1:
+				signal_histo.append(self.model_prediction[i])
+			if self.target_validation[i] == 1 and self.target_adversarial_validation[i] == 0:
+				signal_sys_histo.append(self.model_prediction[i])
+			if self.target_validation[i] == 0 and self.target_adversarial_validation[i] == 1:
+				background_histo.append(self.model_prediction[i])
+			if self.target_validation[i] == 0 and self.target_adversarial_validation[i] == 0:
+				background_sys_histo.append(self.model_prediction[i])
+
+		
+		list_samples = [self.signal_tree, self.signal_systematics_tree, self.background_tree, self.background_systematics_tree]
+		list_names = [self.config['SignalSample'],self.config['SignalSystematicsSample'],self.config['BackgroundSample'],self.config['BackgroundSystematicsSample']]
+		list_pred = [signal_histo, signal_sys_histo, background_histo, background_sys_histo]
+
+		# read the input data and dump it back into a new root file together with the prediction, until ur.update is implemented
+		try:
+			with ur.recreate(outfileName + '.root') as f:
+				logging.debug('Building root file')
+				for i in range(len(list_samples)):
+					vartype_dict = {}
+					var_dict = {}
+					# read all the variables
+					vars = [var.decode('utf-8') for var in list_samples[i].iterkeys()]
+					# for each variable, read the data and its type into dicts, add the NN prediction, then dump it into a new tree
+					for var in vars:
+						sample = list_samples[i].pandas.df(var)
+						sample_type = np.array(sample).dtype
+						if sample_type in ['float32','int32']:
+							vartype_dict[var] = sample_type
+							var_dict[var] = sample
+					vartype_dict['NN_pred'] = 'float32'
+					var_dict['NN_pred'] = [float(j) for j in list_pred[i]]
+
+					f[list_names[i]] = ur.newtree({var:val for var,val in vartype_dict.items()})
+					for var,val in var_dict.items():
+						logging.debug('Filling data')
+						f[list_names[i]][var].newbasket(val)
+		except Exception as e:
+			logging.ERROR(f'Failed to create root file: {traceback.format_exc()}')
+		
+		os.system(f'mv {outfileName}.root {self.root_file_dir}')
+		logging.debug('Root file saved')
 
 	def print_config(self):
-		print('Config used:')
+		logging.info('Config used:')
 		for key in self.config:
-			print(key + ': ' + self.config[key])
-
-#	def write_log(self):
-#		with open('whk_log.txt','w') as f:
-#			f.write(self.logger)
+			logging.info(key + ': ' + self.config[key])
