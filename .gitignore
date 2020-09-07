@@ -16,6 +16,7 @@ tempout/
 .vscode/
 __pycache__
 *.code-workspace
+.pylintrc
 
 # ignore any root files
 *.root

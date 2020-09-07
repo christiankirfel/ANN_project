@@ -1,11 +1,10 @@
-import tarfile, pickle, os, glob
+import tarfile
+import pickle
+import os
+import glob
 
 import matplotlib.pyplot as plt
-import numpy as np
-import sklearn as skl
 from sklearn.metrics import roc_curve, auc
-
-import concurrent.futures as cf
 
 color_tW = '#0066ff'
 color_tt = '#990000'
@@ -15,6 +14,9 @@ color_tt2 = '#FF6600'
 
 path_prefix = ''
 path_suffix = ''
+
+# pylint: disable=unused-variable
+# pylint: disable=redefined-outer-name
 
 def plot_sep_all(pref, sample_validation, target_validation, target_adversarial_validation, model_prediction):
 	'''
@@ -36,7 +38,7 @@ def plot_sep_all(pref, sample_validation, target_validation, target_adversarial_
 			background_histo.append(model_prediction[i])
 		if target_validation[i] == 0 and target_adversarial_validation[i] == 0:
 			background_sys_histo.append(model_prediction[i])
-			
+
 	ns1, bins1, patches1 = plt.hist(signal_histo, range=[0., 1.], linewidth = 1, bins=30, histtype="step", density = True, color=color_tW, label = r'$tW_\mathrm{nom}$')
 	ns3, bins3, patches3 = plt.hist(background_histo, range=[0., 1.], linewidth = 1, bins=30, histtype="step", density = True, color=color_tt, label = r'$t\bar{t}_\mathrm{nom}$')
 	ns2, bins2, patches2 = plt.hist(signal_sys_histo, range=[0., 1.], linewidth = 1, bins=30, histtype="step", density = True, color=color_tW, label = r'$tW_\mathrm{sys}$', linestyle='dashed')
@@ -50,19 +52,19 @@ def plot_sep_all(pref, sample_validation, target_validation, target_adversarial_
 	plt.legend(frameon=False)
 
 	ratioArray_tW = []
-	for iterator in range(len(ns1)):
+	for iterator, item in enumerate(ns1):
 		if ns1[iterator] > 0:
 			ratioArray_tW.append(ns2[iterator]/ns1[iterator])
 		else:
 			ratioArray_tW.append(1.)
 
 	ratioArray_tt = []
-	for iterator in range(len(ns3)):
+	for iterator, item in enumerate(ns3):
 		if ns3[iterator] > 0:
 			ratioArray_tt.append(ns4[iterator]/ns3[iterator])
 		else:
 			ratioArray_tt.append(1.)
-	
+
 	axis2 = plt.subplot(212, sharex = axis1)
 	plt.plot(bins1[:-1], ratioArray_tW, color = color_tW, drawstyle = 'steps-mid')
 	plt.plot(bins1[:-1], ratioArray_tt, color = color_tt, drawstyle = 'steps-mid')
@@ -88,7 +90,7 @@ def plot_sep_all(pref, sample_validation, target_validation, target_adversarial_
     # 	#lossestrain["L_r"].append(-l_train[2])
     # 	#lossestrain["L_f - L_r"].append(l_train[0])
 
-    # 	ax1 = plt.subplot(311)   
+    # 	ax1 = plt.subplot(311)
     # 	values_test = np.array(l_test["L_f"])
     # 	values_train = np.array(l_train["L_f"])
     # 	plt.plot(range(len(values_test)), values_test, label=r"$Loss_{net1}^{test}$", color="blue", linestyle='dashed')
@@ -97,8 +99,8 @@ def plot_sep_all(pref, sample_validation, target_validation, target_adversarial_
     # 	plt.legend(frameon=False)
     # 	plt.grid()
     # 	ax1.ticklabel_format(style='sci', axis='both', scilimits=(0,0))
-        
-    # 	ax2 = plt.subplot(312, sharex=ax1) 
+
+    # 	ax2 = plt.subplot(312, sharex=ax1)
     # 	values_test = np.array(l_test["L_r"])
     # 	values_train = np.array(l_train["L_r"])
     # 	plt.plot(range(len(values_test)), values_test, label=r"$\lambda$"+r"$ \cdot Loss_{net2}^{test}$", color="green", linestyle='dashed')
@@ -108,17 +110,17 @@ def plot_sep_all(pref, sample_validation, target_validation, target_adversarial_
     # 	plt.ylabel('Loss')
     # 	plt.grid()
     # 	ax2.ticklabel_format(style='sci', axis='both', scilimits=(0,0))
-        
+
     # 	ax3 = plt.subplot(313, sharex=ax1)
     # 	values_test = np.array(l_test["L_f - L_r"])
     # 	values_train = np.array(l_train["L_f - L_r"])
-    # 	plt.plot(range(len(values_test)), values_test, label=r"$Loss_{net1}^{test} - $"+r"$\lambda$"+r"$ \cdot Loss_{net2}^{test}$", color="red", linestyle='dashed')  
-    # 	plt.plot(range(len(values_train)), values_train, label=r"$Loss_{net1}^{train} - $"+r"$\lambda$"+r"$ \cdot Loss_{net2}^{train}$", color="red")  
+    # 	plt.plot(range(len(values_test)), values_test, label=r"$Loss_{net1}^{test} - $"+r"$\lambda$"+r"$ \cdot Loss_{net2}^{test}$", color="red", linestyle='dashed')
+    # 	plt.plot(range(len(values_train)), values_train, label=r"$Loss_{net1}^{train} - $"+r"$\lambda$"+r"$ \cdot Loss_{net2}^{train}$", color="red")
     # 	plt.legend(loc="upper right", prop={'size' : 7})
     # 	plt.grid()
     # 	ax3.ticklabel_format(style='sci', axis='both', scilimits=(0,0))
     # 	plt.xlabel('Epoch')
-        
+
     # 	plt.legend(frameon=False)
     # 	plt.gcf().savefig('losses' + path_postfix + '.png')
     # 	plt.gcf().clear()
@@ -146,7 +148,6 @@ def plot_losses_combined(pref, model_loss, val_model_loss, model_2_loss1, val_mo
 	plt.savefig(pref + 'combined_losses_' + path_suffix + '.png')
 	plt.clf()
 
-
 def plot_discriminator(pref, discriminator_history):
 	'''
 	Plot the discriminator pretraining loss
@@ -154,7 +155,7 @@ def plot_discriminator(pref, discriminator_history):
 	plt.plot(discriminator_history['loss'])
 	plt.savefig(f'{pref}discriminator_losses_{path_suffix}.png')
 	plt.clf()
-	
+
 def plot_just_train(pref, model_loss, model_2_loss1, loss):
 	'''
 	Plots just the training losses into a single graphic
@@ -196,6 +197,23 @@ def plot_roc(pref, auc_var, fpr, tpr):
 	plt.gcf().savefig(pref + 'roc' + path_suffix + '.png')
 	plt.gcf().clear()
 
+def plot_adv_roc(pref, auc_var, fpr, tpr):
+	'''
+	Plot Receiver Operating Curve
+	'''
+	print('Eating a pickle')
+	plt.title('Receiver Operating Characteristic (Adversary)')
+	plt.plot(fpr, tpr, 'g--', label='$AUC_{train}$ = %0.2f'% auc_var)
+	plt.legend(loc='lower right')
+	plt.plot([0,1],[0,1],'r--')
+	plt.xlim([-0.,1.])
+	plt.ylim([-0.,1.])
+	plt.ylabel('True Positive Rate', fontsize='large')
+	plt.xlabel('False Positive Rate', fontsize='large')
+	plt.legend(frameon=False)
+	plt.gcf().savefig(pref + 'roc_adv' + path_suffix + '.png')
+	plt.gcf().clear()
+
 # def plot_accuracy_old():
     # 	'''
     # 	Plot the accuracy. Surprising, isn't it?
@@ -212,6 +230,9 @@ def plot_roc(pref, auc_var, fpr, tpr):
     # 	plt.gcf().clear()
 
 def plot_acc(pref, acc, val_acc):
+	'''
+	Plot accuracy
+	'''
 	plt.title('Accuracy')
 	plt.plot(acc)
 	plt.plot(val_acc)
@@ -258,6 +279,7 @@ def do_the_things(f):
 	fpr, tpr, threshold = roc_curve(target_validation, model_prediction)
 	auc_var = auc(fpr, tpr)
 	adversary_fpr, adversary_tpr, adversary_threshold = roc_curve(target_adversarial_validation, adversary_prediction)
+	auc_adv_var = auc(adversary_fpr, adversary_tpr)
 
 	#build the lists
 	loss = []
@@ -292,14 +314,15 @@ def do_the_things(f):
 
 	#do the plotting stuff
 
-	
+
 	plot_sep_all(path_prefix, sample_validation, target_validation, target_adversarial_validation, model_prediction)
 	plot_roc(path_prefix, auc_var, fpr, tpr)
+	plot_adv_roc(path_prefix, auc_adv_var, adversary_fpr, adversary_tpr)
 	plot_losses_combined(path_prefix, model_loss, val_model_loss, model_2_loss1, val_model_2_loss1, loss, val_loss)
 	plot_just_train(path_prefix, model_loss, model_2_loss1, loss)
 	plot_acc(path_prefix, acc, val_acc)
 	plot_discriminator(path_prefix, discriminator_history)
-	
+
 	print('All gone')
 
 	#clean up

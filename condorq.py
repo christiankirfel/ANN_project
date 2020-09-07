@@ -22,10 +22,12 @@ else:
 file_string = str(check_output(['condor_q','-global']))
 jobs_list = file_string.split('--')
 
-print_list = [['NODE','JOB START','JOB NAME','JOB STATUS','JOB IDs'],['--------','--------','--------','--------','--------']]
+print_list = [['NODE','JOB START','JOB NAME','JOB STATUS','JOB IDs'],
+			['--------','--------','--------','--------','--------']]
 TOTAL = 0
 HELD = False
 
+# pylint: disable=missing-class-docstring
 class bcolors:
 	HEADER = '\033[95m'
 	OKBLUE = '\033[94m'
@@ -60,14 +62,14 @@ for job in jobs_list:
 			job_ids = f'{info_list[9]}'
 			if logging.root.level == logging.DEBUG:
 				logging.debug('INFO_LIST:')
-				[logging.debug(f'{k}: {info_list[k]}') for k in range(len(info_list))]
+				_ = [logging.debug(f'{k}: {info_list[k]}') for k in range(len(info_list))]
 				logging.debug('END_INFO_LIST')
 
 			jobs = {}
 			job_states = ['done','run','idle','hold']
 
-			for i in range(len(job_states)):
-				jobs[job_states[i]] = int(info_list[i+4]) if info_list[i+4].isdigit() else 0
+			for i, item in enumerate(job_states):
+				jobs[item] = int(info_list[i+4]) if info_list[i+4].isdigit() else 0
 
 			jobs_total = sum(jobs.values())
 
@@ -77,7 +79,11 @@ for job in jobs_list:
 				TOTAL += jobs_total
 				if jobs['hold'] > 0:
 					HELD = True
-				columns = [f'{server_name}:',f'{job_start}',f'{batch_name}', f'{jobs["done"]} done, {jobs["run"]} running, {jobs["idle"]} idle, {jobs["hold"]} held.',f'{job_ids}']
+				columns = [f'{server_name}:',
+						f'{job_start}',
+						f'{batch_name}',
+						f'{jobs["done"]} done, {jobs["run"]} running, {jobs["idle"]} idle, {jobs["hold"]} held.',
+						f'{job_ids}']
 				print_list.append(columns)
 
 if HELD:
@@ -87,7 +93,7 @@ print(f'TOTAL JOBS: {TOTAL}')
 lens = []
 for col in zip(*print_list):
 	lens.append(max([len(v)+10 for v in col]))
-format = " ".join(["{:<" + str(l) + "}" for l in lens])
+format_ = " ".join(["{:<" + str(l) + "}" for l in lens])
 for row in print_list:
-	print(format.format(*row))
+	print(format_.format(*row))
 	

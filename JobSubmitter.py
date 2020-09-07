@@ -1,5 +1,5 @@
 '''
-Submits jobs for HTCondor GPU. 
+Submits jobs for HTCondor GPU.
 Format: python JobSubmitter.py [options] [comma-separated values] ...
 	e.g. python JobSubmitter.py LambdaValue -0.1,-0.2,-0.3
 Additional options:
@@ -7,12 +7,15 @@ Additional options:
 '''
 
 import configparser as cfg
-import os, sys, itertools, logging
+import os
+import sys
+import itertools
+import logging
+
 config = cfg.ConfigParser(inline_comment_prefixes="#")
 config.read('config_ANN.ini')
 config = config['General']
 if config['DebugLevel']=='DEBUG':
-	#logging.basicConfig(filename='/cephfs/user/s6niboei/BAFDEBUG.log', filemode='a', level=logging.DEBUG)
 	logging.basicConfig(level=logging.DEBUG)
 else:
 	logging.basicConfig(level=logging.WARNING)
@@ -44,14 +47,14 @@ try:
 		pass
 	else:
 		while argv_pos < len(sys.argv):
-			logging.debug('Parsing \'' + str(sys.argv[argv_pos]) + '\'')
+			logging.debug(f'Parsing \'{str(sys.argv[argv_pos])}\'')
 			if str(sys.argv[argv_pos]) == '--pseudo' or str(sys.argv[argv_pos]) == '-p':
 				o_pseudo = True
 				argv_pos += 1
 			else:
 				# make sure option is part of the config
 				if not str(sys.argv[argv_pos]) in ANNconfig:
-					print(f'ERROR: {sys.argv[agv_pos]} is not a valid option.')
+					print(f'ERROR: {sys.argv[argv_pos]} is not a valid option.')
 					sys.exit(1)
 				option.append(str(sys.argv[argv_pos]))
 				varlist.append(str(sys.argv[argv_pos+1]).split(','))
@@ -60,20 +63,20 @@ except:
 	print('Couldn\'t parse arguments. Format: JobSubmitter.py [options] [comma-separated values]')
 	sys.exit(1)
 
-# this looks funky but its just converting the arguments in the proper format	
-if not len(option) == 0:
+# this looks funky but its just converting the arguments in the proper format
+if len(option) != 0:
 	for el in option:
-		if not arguments == '':
+		if arguments != '':
 			arguments += ' '
-		if not argument_string == '':
+		if argument_string != '':
 			argument_string += ', '
 		arguments = arguments + '$(' + el + ')'
 		argument_string = argument_string + el
 	argument_string += ' from (\n'
 	x = list(itertools.product(*varlist))
-	for i in range(len(x)):
+	for i, item in enumerate(x):
 		argument_string += '\t'
-		for j in range(len(option)):
+		for j, jtem in enumerate(option):
 			if not j==0:
 				argument_string += ' '
 			argument_string += option[j] + '=' + x[i][j]
@@ -132,7 +135,7 @@ Request_disk            = 20 GB
 
 queue """
 
-logging.debug('Argument string is ' + argument_string)
+logging.debug(f'Argument string is {argument_string}')
 script += argument_string
 with open('AutoJobSubmission.jdl','w') as f:
 	f.write(script)
@@ -141,4 +144,3 @@ if not o_pseudo:
 	print('Submitting jobs')
 	os.system('condor_submit AutoJobSubmission.jdl')
 	os.system('rm -f AutoJobSubmission.jdl')
-

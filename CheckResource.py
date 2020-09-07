@@ -1,4 +1,5 @@
-import subprocess, time
+import subprocess
+import time
 
 while True:
 	out = subprocess.check_output("condor_q -constraint 'JobStatus == 2' -af:hj Cmd ResidentSetSize_RAW RequestMemory DiskUsage_RAW RequestDisk", shell=True)
@@ -17,3 +18,4 @@ while True:
 	except:
 		print('No active processes found')
 	time.sleep(30)
+	
