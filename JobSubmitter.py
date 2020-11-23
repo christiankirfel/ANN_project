@@ -1,9 +1,5 @@
 '''
 Submits jobs for HTCondor GPU.
-Format: python JobSubmitter.py [options] [comma-separated values] ...
-	e.g. python JobSubmitter.py LambdaValue -0.1,-0.2,-0.3
-Additional options:
-	-p, --pseudo: Generate the job file but don't submit
 '''
 
 import configparser as cfg
@@ -11,14 +7,6 @@ import os
 import sys
 import itertools
 import logging
-
-config = cfg.ConfigParser(inline_comment_prefixes="#")
-config.read('config_ANN.ini')
-config = config['General']
-if config['DebugLevel']=='DEBUG':
-	logging.basicConfig(level=logging.DEBUG)
-else:
-	logging.basicConfig(level=logging.WARNING)
 
 if sys.version_info.major < 3:
 	print('Use Python 3 you pleblord')
@@ -28,8 +16,12 @@ argument_string = ''
 option = []
 varlist = []
 o_pseudo = False
+o_cpu = False
 argv_pos = 1
 arguments = ''
+req_cpu = 8
+req_ram = 16
+req_hdd = 20
 
 ANNconfig = cfg.ConfigParser(inline_comment_prefixes="#")
 ANNconfig.read('config_ANN.ini')
@@ -46,11 +38,20 @@ try:
 	if len(sys.argv) == 1:
 		pass
 	else:
+		# what a mess
 		while argv_pos < len(sys.argv):
 			logging.debug(f'Parsing \'{str(sys.argv[argv_pos])}\'')
 			if str(sys.argv[argv_pos]) == '--pseudo' or str(sys.argv[argv_pos]) == '-p':
 				o_pseudo = True
 				argv_pos += 1
+			elif str(sys.argv[argv_pos]) == '-cpu':
+				o_cpu = True
+				argv_pos += 1
+				logging.debug('Using CPU')
+			elif str(sys.argv[argv_pos]) == '-cpucores':
+				req_cpu = int(sys.argv[argv_pos+1])
+				argv_pos += 2
+				logging.debug(f'Requesting {req_cpu} CPU cores')
 			else:
 				# make sure option is part of the config
 				if not str(sys.argv[argv_pos]) in ANNconfig:
@@ -83,10 +84,19 @@ if len(option) != 0:
 		argument_string += '\n'
 	argument_string += ')'
 
-print(arguments)
-
 import pprint
 pprint.pprint(varlist)
+
+shfile = 'runANN.sh'
+cfile = 'config_ANN.ini'
+pyfile = 'run_ANN.py'
+jname = 'ANN_GPU'
+wfile = 'job-wrapper_ANN.sh'
+
+if o_cpu:
+	req_gpu = ''
+else:
+	req_gpu = 'Request_gpus			= 1'
 
 script = f"""
 #################################################################################################
@@ -95,7 +105,7 @@ script = f"""
 #################################################################################################
 
 # Path to executable
-Executable              = job-wrapper_ANN.sh
+Executable              = {wfile}
 # Job process number is given as argument to executable
 Arguments               = "{arguments}"
 #$(Process) $(Variable) 
@@ -106,9 +116,8 @@ Universe                = vanilla
 # Should executable be transferred from the submit node to the job working directory on the worker node?
 Transfer_executable     = True
 # List of input files to be transferred from the submit node to the job working directory on the worker node
-Transfer_input_files    = runANN.sh, variables_{config['Region']}.txt, config_ANN.ini,  run_ANN.py,  ANN_defs.py, tW_tt_v29_parton_{config['Region']}.root
+Transfer_input_files    = {shfile}, variables_{ANNconfig['Region']}.txt, {cfile},  {pyfile},  ANN_defs.py, plot_defs.py
 # List of output files to be transferred from the job working directory on the worker node to the submit node
-#Transfer_output_files   = code/model_prediction.jar, code/sample_validation.jar, code/target_adversarial_validation.jar, code/target_validation.jar, code/history_dict.jar, code/adversary_history_dict.jar, code/l_test.jar, code/l_train.jar, code/tpr.jar, code/fpr.jar, code/auc.jar
 Transfer_output_files   = code/out
 
 # Specify job input and output
@@ -116,22 +125,22 @@ Error                   = logs/err/$(ClusterId).$(Process).err.txt
 #Input                   =                                                
 Output                  = logs/out/$(ClusterId).$(Process).out.txt                          
 Log                     = logs/log/$(ClusterId).$(Process).log.txt
-JobBatchName = "ANN_GPU"
+JobBatchName = "{jname}"
 
 # Request resources to the best of your knowledge
 # (check log file after job completion to compare requested and used resources)
 # Memory in MiB, if no unit is specified!
-Request_memory          = 16 GB
-Request_cpus            = 8
-Request_gpus            = 1
+Request_memory          = {req_ram} GB
+Request_cpus            = {req_cpu}
+{req_gpu}
 # Disk space in kiB, if no unit is specified!
-Request_disk            = 20 GB
+Request_disk            = {req_hdd} GB
 
 # Additional job requirements (note the plus signs)
 # Choose OS (options: "SL6", "CentOS7", "Ubuntu1604")
 +ContainerOS            = "CentOS7"
 +CephFS_IO				= "high"
-+MaxRuntimeHours		= 6
++MaxRuntimeHours		= 3
 
 queue """
 
@@ -141,6 +150,6 @@ with open('AutoJobSubmission.jdl','w') as f:
 	f.write(script)
 
 if not o_pseudo:
-	print('Submitting jobs')
+	#print('Submitting jobs')
 	os.system('condor_submit AutoJobSubmission.jdl')
 	os.system('rm -f AutoJobSubmission.jdl')

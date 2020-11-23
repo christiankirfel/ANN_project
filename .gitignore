@@ -30,6 +30,8 @@ logs/
 *_test/
 random*/
 .asetup
+z_archive/
+bench*
 
 # zipped environment
 whk_env.tar.gz

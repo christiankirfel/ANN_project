@@ -24,10 +24,9 @@ module load anaconda/2020.02-py37
 echo 'Activating environment' >> "/cephfs/user/s6niboei/BAFDEBUG.log"
 tar xf ${BUDDY}/tf2.1_gpu.tar.gz
 source activate /jwd/tf2.1_gpu
-python -m pip install guppy3
 # debug
 mkdir code
-mv *.py runANN.sh *.ini *.txt *.root code/
+mv *.py runANN.sh *.ini *.txt code/
 cd code
 mkdir out
 source runANN.sh $@

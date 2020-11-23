@@ -1,28 +1,53 @@
-change config stuff in **config\_whk\_ANN.ini**
+# **ANN for the *tW* channel**
 
-run training using **whk\_ANN\_run.py**
+## Overview
 
-plot using **whk\_ANN\_plot.py**
+- All the config is in **config_ANN.ini**
+- ANN code is in **ANN_defs.py**
+- Plotting is **plot_defs.py**
+- Run the ANN with **run_ANN.py**/**runANN.sh**
+- Submit to BAF with **JobSubmitter.py**
 
-submit BAF jobs using **JobSubmitter.py**
+## Input data
 
-all the magic happens in **whk\_ANN\_defs.py**
+This code expects a single flat n-tuple containing each training set in a single tree with names specificied in the config.
 
-Changelog
+## How to submit jobs to BAF
 
-**20-05-15**
-- Added support for 2nd to last layer as adversarial input
-- Added job submitting python script
+Submit a single job:
 
-**20-03-08**
-- Moved plotting into a separate file
+`$ python JobSubmitter.py`
 
-**19-11-20**
-- Added batch size option to network.evaluate
+Start grid searches by adding \<option\> \<comma-separated list\>, e.g.
 
-**19-11-08**
-- Created new branch for further work
-- Started implementing config file
+`$ python JobSubmitter.py LambdaValue 0.1,0.25,0.5,1.0`
 
-**19-10-14**
-- Initial commit with code from Christian's master thesis
+Result folder will be named accordingly.
+
+Multiple options can be added together to iterate through all possibilities:
+
+`$ python JobSubmitter.py LambdaValue 0.1,0.5 CombinedLearningRate 0.01,0.05`
+
+Be careful: this will try every combination so it can cause a lot of jobs to be started
+
+## Additional options
+
+`-p:` generate submit file but don't actually submit, for debugging 
+
+`-cpu:` submit to CPU instead of GPU nodes
+
+`-cpucores:` specify CPU cores to request (should never be >8 for GPU jobs)
+
+## Separate plotting
+
+Plotting can also be done separately by using the **PlotSubmitter.py** script. It will need some modifications tho to work.
+
+## Other stuff
+
+CheckResource.sh checks current resource usage of jobs, originally to debug a memory leak. Not very useful tho...
+
+condorq.py is a little script to format `condor_q -global` output in a nicer way
+
+ks.py calculates the difference/separation of nom and sys samples
+
+plot_batchsize.py makes a nice plot to look at performance compared to batch size

@@ -4,6 +4,7 @@ import sys
 import configparser as cfg
 import pickle
 import logging
+import plot_defs
 from datetime import datetime
 import random as rn
 import time
@@ -11,9 +12,13 @@ import time
 #Loading tensorflow
 #Setting some options for BAF
 import tensorflow as tf
-NUM_THREADS=1
-tf.config.threading.set_inter_op_parallelism_threads(NUM_THREADS)
-tf.config.threading.set_intra_op_parallelism_threads(NUM_THREADS)
+# this stuff may or may not be necessary for performance reasons
+#NUM_THREADS=1
+#tf.config.threading.set_inter_op_parallelism_threads(NUM_THREADS)
+#tf.config.threading.set_intra_op_parallelism_threads(NUM_THREADS)
+#tf.config.threading.set_inter_op_parallelism_threads(1)
+#tf.config.threading.set_intra_op_parallelism_threads(8)
+
 
 # pylint: disable=import-error
 from tensorflow.keras.models import Model
@@ -21,6 +26,8 @@ from tensorflow.keras.layers import Dense, Input, BatchNormalization, Dropout
 from tensorflow.keras import metrics
 from tensorflow.keras.optimizers import SGD, Adagrad, Adam
 from tensorflow.keras.losses import binary_crossentropy
+from tensorflow.keras.utils import plot_model
+# pylint: enable=import-error
 
 #Loading sklearn for data processing & analysis
 from sklearn.model_selection import train_test_split
@@ -47,18 +54,8 @@ color_tt2 = '#FF6600'
 
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-
-#Setting up the output directories
-output_path = '/cephfs/user/s6niboei/out2/'
-array_path = output_path + 'arrays/'
-if not os.path.exists(output_path):
-	os.makedirs(output_path)
-if not os.path.exists(array_path):
-	os.makedirs(array_path)
-
-
-plt.ticklabel_format(style='sci', axis='x', scilimits=(0,0))
-plt.ticklabel_format(style='sci', axis='y', scilimits=(0,0))
+#plt.ticklabel_format(style='sci', axis='x', scilimits=(0,0))
+#plt.ticklabel_format(style='sci', axis='y', scilimits=(0,0))
 
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #This is the main class for the adversarial neural network setup
@@ -73,24 +70,24 @@ class ANN_environment(object):
 		self.time_start = datetime.now().strftime(r"%y%m%d_%H_%M_%S")
 		self.time1 = time.time()
 		#logging.debug('Setting up ANN')
-
+		self.config = self.load_config()
 		#load the config
-		self.load_config()
-		self.log_file_dir = self.config['LogFileDir']
-		self.setup_logging()
+		if not os.path.exists(self.config['LogFileDir']):
+			os.makedirs(self.config['LogFileDir'])
+		self.setup_logging(args)
+		logging.debug('Begin network initialization')
 		self.load_custom_config(args)
 		self.print_config()
 
-		if self.config['UseTop'] == '1':
-			with open(f"/cephfs/user/s6niboei/BAF_top_{self.time_start}",'w') as f:
-				pass
-
+		# load variables
 		with open(f"variables_{self.config['Region']}.txt","r") as f:
 			self.variables = np.asarray([line.strip() for line in f])
 
-		self.root_file_dir = self.config['RootFileDir']
+		if not os.path.exists(self.config['RootFileDir']):
+			os.makedirs(self.config['RootFileDir'])
 
 		#The seed is used to make sure that both the events and the labels are shuffeled the same way because they are not inherently connected.
+		# Other are only necessary if the network is unstable
 		self.seed = int(self.config['Seed'])
 		np.random.seed(self.seed)
 		rn.seed(self.seed)
@@ -98,6 +95,7 @@ class ANN_environment(object):
 
 		# Check if theres a background systematic
 		self.has_background_systematic = False if self.config['BackgroundSystematicsSample'] == 'NONE' else True
+		logging.debug(f'Background systematic set to {self.has_background_systematic}')
 
 		#All information necessary for the input
 		#The exact data and targets are set late
@@ -142,10 +140,12 @@ class ANN_environment(object):
 		self.adversary_nodes = int(self.config['AdversaryNodes'])
 		#Setup of the networks, loss and optimisation
 		self.discriminator_optimizer = self.get_optimizer('Discriminator')
+		self.discriminator_activation = self.config['DiscriminatorActivation']
 		self.discriminator_dropout = float(self.config['DiscriminatorDropout'])
 		self.discriminator_inputdropout = float(self.config['DiscriminatorInputDropout'])
  		#self.discriminator_loss = binary_crossentropy
 		self.adversary_optimizer = self.get_optimizer('Adversary')
+		self.adversary_activation = self.config['AdversaryActivation']
 		self.adversary_dropout = float(self.config['AdversaryDropout'])
 		self.adversary_initializer = self.config['AdversaryInitializer']
  		#self.adversary_loss = binary_crossentropy
@@ -164,34 +164,25 @@ class ANN_environment(object):
 		self.threshold = 0.
 		self.auc = 0.
 
-		self.losses_test = {"L_f": [], "L_r": [], "L_f - L_r": []}
-		self.losses_train = {"L_f": [], "L_r": [], "L_f - L_r": []}
-		self.lambda_value = float(self.config['LambdaValue'])
+		#self.losses_test = {"L_f": [], "L_r": [], "L_f - L_r": []}
+		#self.losses_train = {"L_f": [], "L_r": [], "L_f - L_r": []}
+		self.lambda_value = -1 * float(self.config['LambdaValue'])
 
-		#
+		# convert some config stuff
+		self.use_batch_normalization = self.ini_to_bool(self.config['BatchNormalization'])
 		self.use_last_layer = self.ini_to_bool(self.config['UseLastLayer'])
 		self.train_adversarial = self.ini_to_bool(self.config['TrainAdversarial'])
-		self.use_early_stopping = self.ini_to_bool(self.config['UseEarlyStopping'])
-		temp = {True: 'Using early stopping', False: 'Not using early stopping'}
-		logging.debug(temp[self.use_early_stopping])
-		self.early_stopping_mode = self.config['EarlyStoppingMode']
-		self.early_stopping_epochs = int(self.config['EarlyStoppingEpochs'])
-		if not (self.early_stopping_epochs % 2) == 0:
-			logging.error('Early stopping epochs must be even')
-			sys.exit(1)
-		self.use_early_stopping_discriminator = self.ini_to_bool(self.config['EarlyStoppingDiscriminator'])
+		self.early_stopping_combined = self.ini_to_bool(self.config['EarlyStoppingCombined'])
+		self.early_stopping_patience = int(self.config['EarlyStoppingPatience'])
+		self.early_stopping_discriminator = self.ini_to_bool(self.config['EarlyStoppingDiscriminator'])
 		self.losses_es = []
 		self.losses_esd = []
 
-		tf.config.optimizer.set_jit(self.ini_to_bool(self.config['UseXLA']))
+		self.save_root_file = self.ini_to_bool(self.config['SaveRootFile'])
+		self.save_tar_file = self.ini_to_bool(self.config['SaveTarFile'])
 
-		# pylint: disable=unused-import
-		if self.config['UseGuppy'] == '1':
-			try:
-				from guppy import hpy
-			except:
-				logging.warning('guppy not found')
-		# pylint: enable=unused-import
+		# whether to use XLA compilation
+		tf.config.optimizer.set_jit(self.ini_to_bool(self.config['UseXLA']))
 
 		logging.debug('Network initialized')
 
@@ -199,19 +190,47 @@ class ANN_environment(object):
 		"""
 		Loads the initial config settings
 		"""
-		self.custom_config = ''
-		self.config_path = "config_ANN.ini"
-		self.config = cfg.ConfigParser(inline_comment_prefixes="#")
-		self.config.read(self.config_path)
-		self.config = self.config['General']
+		config_path = "config_ANN.ini"
+		conf = cfg.ConfigParser(inline_comment_prefixes="#")
+		try:
+			conf.read(config_path)
+			conf = conf['General']
+		except:
+			print('Config loading failed', file=sys.stderr)
+			sys.exit(1)
 
-	def setup_logging(self):
+		return conf
+
+	def load_custom_config(self, args):
+		"""
+		Loads additional config as specified by the command line arguments.
+		Arguments should be specified in the format Option=Value
+		"""
+		self.custom_config = ""
+
+		if len(args) > 1:
+			for x in range(1,len(args)):
+				try:
+					temp = str(args[x]).split('=')
+				except:
+					print(f'Error trying to load custom config: {args[x]}', file=sys.stderr)
+					sys.exit(1)
+				if not temp[0] in self.config:
+					print(f'Key {temp[0]} could not be found in config',file=sys.stderr)
+					sys.exit(1)
+				self.config[temp[0]] = temp[1]
+				self.custom_config += f"{temp[0]}_{temp[1]}"
+
+	def setup_logging(self, args):
 		"""
 		Sets up the logging system
 		"""
 
 		log_file_dir = self.config['LogFileDir']
-		log_file_name = f'log_{self.time_start}.txt'
+		if len(args) > 1:
+			log_file_name = f'log_{self.time_start}_{args[1]}.txt'
+		else:
+			log_file_name = f'log_{self.time_start}.txt'
 		fname = f'{log_file_dir}{log_file_name}'
 		# make sure the file exists
 		os.system(f'touch {fname}')
@@ -223,41 +242,17 @@ class ANN_environment(object):
 
 		logging.basicConfig(filename=fname, filemode='a', level=debug_levels[self.config['DebugLevel']], format = '%(asctime)s %(levelname)s:%(message)s', datefmt='%m/%d/%Y %H:%M:%S')
 
-	def load_custom_config(self, args):
-		"""
-		Loads additional config as specified by the command line arguments.
-		Arguments should be specified in the format Option=Value
-		"""
-		logging.debug('Loading custom config')
-		logging.debug('Reading arguments:')
-		for el in args:
-			logging.debug(str(el))
-
-		if len(args) > 1:
-			for x in range(1,len(args)):
-				try:
-					temp = str(args[x]).split('=')
-				except:
-					logging.error('Additional config should be in the format Option=Value\n')
-					sys.exit(1)
-				if not temp[0] in self.config:
-					logging.error(f'Key {temp[0]} could not be found in config\n')
-					sys.exit()
-				self.config[temp[0]] = temp[1]
-				self.custom_config += '_' + temp[0] + '_' + temp[1]
-
-			#if len(args) % 2 == 1:
-			#	for x in range(1,len(args),2):
-			#		if self.config.get(str(args[x]))==None:
-			#			print('[ERROR] Unknown key ' + str(args[x]))
-			#		self.config[str(args[x])] = str(args[x+1])
-				logging.info(f'Custom config: {str(temp[0])}={str(temp[1])}')
-
 	def ini_to_bool(self, option):
 		'''
 		turn option string into a boolean
 		'''
-		return False if option == '0' else True
+		if option == 'True':
+			return True
+		elif option == 'False':
+			return False
+		else:
+			logging.error(f'Invalid boolean config value: {option} - should be "True" or "False".')
+			sys.exit(1)
 
 	def get_optimizer(self, model):
 		'''
@@ -266,7 +261,7 @@ class ANN_environment(object):
 		optimizers = {
 			'SGD': SGD(lr = float(self.config[f'{model}LearningRate']), momentum = float(self.config[f'{model}Momentum'])),
 			'Adagrad': Adagrad(learning_rate = float(self.config[f'{model}LearningRate']), initial_accumulator_value = 0.1, epsilon = 1e-07),
-			'Adam': Adam(learning_rate = float(self.config[f'{model}LearningRate']), beta_1 = 0.9, beta_2 = 0.999, epsilon = 1e-07)
+			'Adam': Adam(learning_rate = float(self.config[f'{model}LearningRate']), beta_1 = 0.5, beta_2 = 0.999, epsilon = 1e-07)
 		}
 		try:
 			return optimizers[self.config[f'{model}Optimizer']]
@@ -335,7 +330,7 @@ class ANN_environment(object):
 		if self.has_background_systematic:
 			self.target_background_adversarial = np.reshape([1 for x in range(len(self.events_background))], (len(self.events_background),1))
 		else:
-			self.target_background_adversarial = np.reshape( np.random.randint(2, size =len( self.events_background)), (len(self.events_background), 1))
+			self.target_background_adversarial = np.reshape( np.random.randint(2, size=len(self.events_background)), (len(self.events_background), 1))
 		self.target_bkg_systematic_adversarial = np.reshape([0 for x in range(len(self.events_bkg_systematic))], (len(self.events_bkg_systematic), 1)) if self.has_background_systematic else None
 
 		#The samples and corresponding targets are now split into a sample for training and a sample for testing. Keep in mind that the same random seed should be used for both splits
@@ -390,14 +385,14 @@ class ANN_environment(object):
 		#In the loop normalisation and dropout are added too
 
 		self.network_input = Input( shape = (self.input_dimension) )
-		self.layer_discriminator = Dense( self.discriminator_nodes, activation = "elu")(self.network_input)
-		self.layer_discriminator = BatchNormalization()(self.layer_discriminator)
+		self.layer_discriminator = Dense( self.discriminator_nodes, activation = self.discriminator_activation)(self.network_input)
+		if self.use_batch_normalization: self.layer_discriminator = BatchNormalization()(self.layer_discriminator)
 		#(experimental) Idea: High dropout in the first layer effectively regularizes variables. Untested.
 		self.layer_discriminator = Dropout(self.discriminator_inputdropout)(self.layer_discriminator)
 		for _ in range(self.discriminator_layers -1):
 			# add hidden layers in a loop with batch normalization and dropout for each
-			self.layer_discriminator = Dense(self.discriminator_nodes, activation = "elu")(self.layer_discriminator)
-			self.layer_discriminator = BatchNormalization()(self.layer_discriminator)
+			self.layer_discriminator = Dense(self.discriminator_nodes, activation = self.discriminator_activation)(self.layer_discriminator)
+			if self.use_batch_normalization: self.layer_discriminator = BatchNormalization()(self.layer_discriminator)
 			self.layer_discriminator = Dropout(self.discriminator_dropout)(self.layer_discriminator)
 		self.layer_discriminator = Dense( 1, activation = "sigmoid")(self.layer_discriminator)
 
@@ -425,22 +420,22 @@ class ANN_environment(object):
 		self.adversary_input = Input( shape = (self.input_dimension) )
 		# decide whether to use last or second to last layer
 		#Idea: If the second to last layer is used as an input to the adversary, that might make it better by giving it more info, instead of just the single node output of the discriminator
-		if self.use_last_layer:
+		if not self.use_last_layer:
 			self.layer_adversary = self.model_discriminator(self.network_input)
 		else:
 			self.layer_adversary = self.adversary_input_model(self.network_input)
-		self.layer_adversary = Dense( self.adversary_nodes, activation = 'elu', kernel_initializer = self.adversary_initializer)(self.layer_adversary)
-		self.layer_adversary = BatchNormalization()(self.layer_adversary)
+		self.layer_adversary = Dense( self.adversary_nodes, activation = self.discriminator_activation, kernel_initializer = self.adversary_initializer)(self.layer_adversary)
+		if self.use_batch_normalization: self.layer_adversary = BatchNormalization()(self.layer_adversary)
 		self.layer_adversary = Dropout(self.adversary_dropout)(self.layer_adversary)
 		#add hidden layers in a loop with batch normalization and dropout
 		for _ in range(self.adversary_layers - 1):
-			self.layer_adversary = Dense(self.adversary_nodes, activation = "elu", kernel_initializer = self.adversary_initializer)(self.layer_adversary)
-			self.layer_adversary = BatchNormalization()(self.layer_adversary)
+			self.layer_adversary = Dense(self.adversary_nodes, activation = self.discriminator_activation, kernel_initializer = self.adversary_initializer)(self.layer_adversary)
+			if self.use_batch_normalization: self.layer_adversary = BatchNormalization()(self.layer_adversary)
 			self.layer_adversary = Dropout(self.adversary_dropout)(self.layer_adversary)
 		self.layer_adversary = Dense( 1, activation = "sigmoid")(self.layer_adversary)
 
 		self.model_adversary = Model(inputs = [self.network_input], outputs = [self.layer_adversary])
-		self.model_adversary.compile(loss = "binary_crossentropy", optimizer = self.adversary_optimizer)
+		self.model_adversary.compile(loss = "binary_crossentropy", optimizer = self.adversary_optimizer, metrics = ['accuracy'])
 		self.model_adversary.summary()
 
 	def build_combined_training(self):
@@ -457,6 +452,15 @@ class ANN_environment(object):
 		#Compiling a model with multiple loss functions lets Keras use the sum by default
 		self.model_combined.compile(loss = ['binary_crossentropy', make_losses_adversary()], optimizer = self.combined_optimizer, metrics = ['accuracy'])
 
+		#plot_model(self.model_combined, to_file='model_combined.png', expand_nested = 'True')
+		#sys.exit(0)
+
+	# def only_discriminator_training(self):
+	# 	'''Train just the discriminator model. This is just for speed comparison'''
+	# 	logging.debug('Running just discriminator training')
+	# 	self.discriminator_history = self.model_discriminator.fit(self.sample_training, self.target_training.ravel(), epochs=self.training_iterations, batch_size = self.batch_size, sample_weight = self.weight_training.ravel(), validation_data = (self.sample_validation, self.target_validation, self.weight_validation.ravel()), verbose = self.verbosity)
+	# 	logging.debug('Discriminator training completed')
+
 	def run_adversarial_training(self):
 		'''
 		This function runs the actual adversarial training by alternating between training the discriminator and adversary networks
@@ -466,59 +470,44 @@ class ANN_environment(object):
 		def make_trainable(network, flag):
 			#helper function
 			network.trainable = flag
-			for l in network.layers:
-				l.trainable = flag
-			network.compile()
+			#for l in network.layers:
+			#	l.trainable = flag
+			#network.compile
 
-		#run this however many times needed, every iterations is one epoch for each network
-		for iteration in range(self.training_iterations):
-
-			logging.info(f'Iteration {iteration+1} of {self.training_iterations}')
-
-			#Only save losses every 5 iterations
-			#if iteration%5 == 0 or iteration == (self.training_iterations-1):
-
-			if self.train_adversarial or iteration == 0:
-				make_trainable(self.model_discriminator, True)
-				make_trainable(self.model_adversary, False)
-
-			logging.debug('Training combined model')
-			self.model_history = self.model_combined.fit(self.sample_training, [self.target_training, self.target_adversarial], validation_data = (self.sample_validation, [self.target_validation, self.target_adversarial_validation], [self.weight_validation.ravel(), self.weight_adversarial_validation.ravel()]), epochs = self.combined_epochs, batch_size = self.batch_size, sample_weight = [self.weight_training.ravel(),self.weight_adversarial.ravel()], verbose = self.verbosity)
-			self.model_history_array.append(self.model_history.history)
-
-			if self.train_adversarial:
-				make_trainable(self.model_discriminator, False)
+		def trainable_switcher(epoch):
+			'''Switch the model to be trained on from classifier to adversary and back'''
+			if epoch % 2 and self.lambda_value > 0.0:
+				logging.debug(f'Training iteration {epoch}')
 				make_trainable(self.model_adversary, True)
+				make_trainable(self.model_discriminator, False)
+			else:
+				logging.debug(f'Training iteration {epoch}')
+				make_trainable(self.model_adversary, False)
+				make_trainable(self.model_discriminator, True)
 
-				logging.debug('Training adversary')
-				self.adversary_history = self.model_adversary.fit(self.sample_training, self.target_adversarial, epochs=1, batch_size = self.batch_size, sample_weight = self.weight_training.ravel(), verbose = self.verbosity)
-				self.adversary_history_array.append(self.adversary_history.history)
+		# add necessary callbacks	
+		callbacks = []
+		switch_training = tf.keras.callbacks.LambdaCallback(on_epoch_begin = lambda epoch,logs: trainable_switcher(epoch))
+		callbacks.append(switch_training)
+		if self.early_stopping_discriminator:
+			es_discriminator = tf.keras.callbacks.EarlyStopping(monitor = 'val_loss', patience = self.early_stopping_patience)
+			callbacks.append(es_discriminator)	
+		if self.early_stopping_combined:
+			es_combined = tf.keras.callbacks.EarlyStopping(monitor = 'val_model_loss', patience = self.early_stopping_patience)
+			callbacks.append(es_combined)
 
-			# Check for early stopping if it is used
-			if self.use_early_stopping:
-				if self.early_stopping() or self.discriminator_es():
-					break
+		# in this obscenely long line the actual training process happens
+		self.model_history = self.model_combined.fit(self.sample_training, [self.target_training, self.target_adversarial], validation_data = (self.sample_validation, [self.target_validation, self.target_adversarial_validation], [self.weight_validation.ravel(), self.weight_adversarial_validation.ravel()]), epochs = self.training_iterations, batch_size = self.batch_size, sample_weight = [self.weight_training.ravel(),self.weight_adversarial.ravel()], verbose = self.verbosity, callbacks = callbacks)
 
-			# Memory debugging
-			# pylint: disable=undefined-variable
-			if self.config['UseGuppy'] == '1':
-				h = hpy()
-				hp = h.heap()
-				logging.debug(hp)
-			# pylint: enable=undefined-variable
-			#if self.config['UseTop'] == '1':
-		#		#logging.debug(subprocess.call('top -n1', shell=True))
-		#		with open(f"/cephfs/user/s6niboei/BAF_top_{self.time_start}",'a') as f:
-		#			subprocess.call(['top','-n','1','b'], shell=True, stdout=f)
-
-			#self.save_losses(iteration, self.model_combined)
+		logging.info('Training completed')
 
 	def pretrain_adversary(self):
 		'''
-		Currently unused
+		Pretrain the adversary, if necessary
 		'''
 
-		self.model_adversary.fit(self.sample_training, self.target_adversarial.ravel(), epochs = self.adversary_epochs, batch_size = int(self.config['BatchSize']), sample_weight = self.weight_adversarial.ravel())
+		logging.debug(f'Pretraining discriminator with {self.adversary_epochs} epochs.')
+		self.adversary_pretrain_history = self.model_adversary.fit(self.sample_training, self.target_adversarial.ravel(), epochs = self.adversary_epochs, batch_size = int(self.config['BatchSize']), sample_weight = self.weight_adversarial.ravel())
 
 	def pretrain_discriminator(self):
 		'''
@@ -527,95 +516,12 @@ class ANN_environment(object):
 
 		logging.debug(f'Pretraining discriminator with {str(self.discriminator_epochs)} epochs.')
 
-		#print(self.target_training[12:500])
-		#print(self.target_training[-1:-100])
-
 		self.model_discriminator.summary()
 
 		self.discriminator_history = self.model_discriminator.fit(self.sample_training, self.target_training.ravel(), epochs=self.discriminator_epochs, batch_size = int(self.config['BatchSize']), sample_weight = self.weight_training.ravel(), validation_data = (self.sample_validation, self.target_validation, self.weight_validation.ravel()), verbose = self.verbosity)
 		self.discriminator_history_array.append(self.discriminator_history)
 		print(self.discriminator_history.history.keys())
-
-		#for training_iteration in range(self.training_iterations):
-		#    discriminator_history = self.model_discriminator.fit(self.sample_training, self.target_training, epochs=self.discriminator_epochs, validation_data = (self.sample_validation, self.target_validation))
-		#    adversary_history = self.model_combined.fit(self.adversarial_training, [self.combined_target, self.adversarial_target], epochs=self.adversary_epochs)
-
-	def early_stopping(self):
-		'''
-		Stops the training early if the loss stops improving
-		'''
-		self.losses_es.append(self.model_history.history['val_loss'][0])
-		logging.debug('Checking losses for early stopping')
-		logging.debug(self.losses_es)
-		los_len = len(self.losses_es)
-		#collect a list with 10 last losses
-		if los_len<=self.early_stopping_epochs:
-			return False
-		elif los_len==(self.early_stopping_epochs+1):
-			self.losses_es.pop(0)
-			first = self.losses_es[0]
-			last = self.losses_es[self.early_stopping_epochs-1]
-			avg = sum(self.losses_es)/self.early_stopping_epochs
-			slice_ = int(self.early_stopping_epochs / 2)
-			first5 = sum(self.losses_es[:slice_])
-			last5 = sum(self.losses_es[-slice_:])
-			if self.early_stopping_mode == 'increase':
-				if last > avg and first < avg and first5 < last5:
-					#stop the training if the loss is going up
-					logging.info('Loss is increasing, stopping training')
-					return True
-				logging.debug('Loss decreasing, keep training')
-				return False
-			elif self.early_stopping_mode == '0.01':
-				if (first5 / last5) < 1.0001:
-					logging.info('Loss is barely decreasing, stopping training')
-					return True
-				logging.debug('Loss is decreasing, keep training')
-				return False
-			else:
-				logging.error('Invalid early stopping mode')
-				return True
-		else:
-			logging.error('Too many items in list in early_stopping')
-
-	def discriminator_es(self):
-		'''
-		Stops the training if the discriminator stops improving
-		'''
-		self.losses_esd.append(self.model_history.history['val_model_loss'][0])
-		logging.debug('Checking losses for early stopping')
-		logging.debug(self.losses_esd)
-		los_len = len(self.losses_esd)
-		#collect a list with 10 last losses
-		if los_len<=self.early_stopping_epochs:
-			return False
-		elif los_len==(self.early_stopping_epochs+1):
-			self.losses_esd.pop(0)
-			first = self.losses_esd[0]
-			last = self.losses_esd[self.early_stopping_epochs-1]
-			avg = sum(self.losses_esd)/self.early_stopping_epochs
-			slice_ = int(self.early_stopping_epochs / 2)
-			first5 = sum(self.losses_esd[:slice_])
-			last5 = sum(self.losses_esd[-slice_:])
-			if self.early_stopping_mode == 'increase':
-				if last > avg and first < avg and first5 < last5:
-					#stop the training if the loss is going up
-					logging.info('Loss is increasing, stopping training')
-					return True
-				logging.debug('Loss decreasing, keep training')
-				return False
-			elif self.early_stopping_mode == '0.01':
-				if (first5 / last5) < 1.0001:
-					logging.info('Loss is barely decreasing, stopping training')
-					return True
-				logging.debug('Loss is decreasing, keep training')
-				return False
-			else:
-				logging.error('Invalid early stopping mode')
-				return True
-		else:
-			logging.error('Too many items in list in early_stopping')
-
+	
 	def predict_model(self):
 		'''
 		Runs all the necessary prediction on the trained model for evaluating the performance and later use
@@ -624,8 +530,21 @@ class ANN_environment(object):
 		logging.debug('Predicting model')
 
 		self.model_prediction = self.model_discriminator.predict(self.sample_validation, batch_size = self.batch_size).ravel()
-		self.fpr, self.tpr, self.threshold = roc_curve(self.target_validation, self.model_prediction)
-		self.auc = auc(self.fpr, self.tpr)
+		self.fpr_test, self.tpr_test, self.threshold = roc_curve(self.target_validation, self.model_prediction)
+		self.auc_test = auc(self.fpr_test, self.tpr_test)
+
+		self.model_prediction_train = self.model_discriminator.predict(self.sample_training, batch_size = self.batch_size).ravel()
+		self.fpr_train, self.tpr_train, self.threshold_triang = roc_curve(self.target_training, self.model_prediction_train)
+		self.auc_train = auc(self.fpr_train, self.tpr_train)
+		# create a dictionary for easy plotting of the roc curve
+		self.roc_dict = {
+			'fpr_test': self.fpr_test,
+			'tpr_test': self.tpr_test,
+			'auc_test': self.auc_test,
+			'fpr_train': self.fpr_train,
+			'tpr_train': self.tpr_train,
+			'auc_train': self.auc_train
+		}
 
 		self.adversary_prediction = self.model_adversary.predict(self.sample_validation, batch_size = self.batch_size).ravel()
 		self.adversary_fpr, self.adversary_tpr, self.adversary_threshold = roc_curve(self.target_adversarial_validation, self.adversary_prediction)
@@ -634,227 +553,251 @@ class ANN_environment(object):
 		print('Discriminator AUC', self.auc)
 		print('Adversary AUC', self.adversary_auc)
 
-	#----------------------------------------------------------------------------------------------Plot structure------------------------------------------------------------------------------------------------------------
-	#pylint: disable=unused-argument
-	def plot_losses(self, i, l_test, l_train):
-		'''
-		Old way of plotting the losses of the network, using a separate network.evaluate call
-		'''
-		#pylint: enable=unused-argument
-		print('Printing losses')
+		#----------------------------------------------------------------------------------------------Plot structure------------------------------------------------------------------------------------------------------------
+		#pylint: disable=unused-argument
+		# def zplot_losses(self, i, l_test, l_train):
+		# 	'''
+		# 	Old way of plotting the losses of the network, using a separate network.evaluate call
+		# 	'''
+		# 	#pylint: enable=unused-argument
+		# 	print('Printing losses')
 
-		ax1 = plt.subplot(311)
-		values_test = np.array(l_test["L_f"])
-		values_train = np.array(l_train["L_f"])
-		plt.plot(range(len(values_test)), values_test, label=r"$Loss_{net1}^{test}$", color="blue", linestyle='dashed')
-		plt.plot(range(len(values_train)), values_train, label=r"$Loss_{net1}^{train}$", color="blue")
-		plt.legend(loc="upper right", prop={'size' : 7})
-		plt.legend(frameon=False)
-		plt.grid()
-		ax1.ticklabel_format(style='sci', axis='both', scilimits=(0,0))
+		# 	ax1 = plt.subplot(311)
+		# 	values_test = np.array(l_test["L_f"])
+		# 	values_train = np.array(l_train["L_f"])
+		# 	plt.plot(range(len(values_test)), values_test, label=r"$Loss_{net1}^{test}$", color="blue", linestyle='dashed')
+		# 	plt.plot(range(len(values_train)), values_train, label=r"$Loss_{net1}^{train}$", color="blue")
+		# 	plt.legend(loc="upper right", prop={'size' : 7})
+		# 	plt.legend(frameon=False)
+		# 	plt.grid()
+		# 	ax1.ticklabel_format(style='sci', axis='both', scilimits=(0,0))
 
-		ax2 = plt.subplot(312, sharex=ax1)
-		values_test = np.array(l_test["L_r"])
-		values_train = np.array(l_train["L_r"])
-		plt.plot(range(len(values_test)), values_test, label=str(self.lambda_value)+r"$ \cdot Loss_{net2}^{test}$", color="green", linestyle='dashed')
-		plt.plot(range(len(values_train)), values_train, label=str(self.lambda_value)+r"$ \cdot Loss_{net2}^{train}$", color="green")
-		plt.legend(loc="upper right", prop={'size' : 7})
-		plt.legend(frameon=False)
-		plt.ylabel('Loss')
-		plt.grid()
-		ax2.ticklabel_format(style='sci', axis='both', scilimits=(0,0))
+		# 	ax2 = plt.subplot(312, sharex=ax1)
+		# 	values_test = np.array(l_test["L_r"])
+		# 	values_train = np.array(l_train["L_r"])
+		# 	plt.plot(range(len(values_test)), values_test, label=str(self.lambda_value)+r"$ \cdot Loss_{net2}^{test}$", color="green", linestyle='dashed')
+		# 	plt.plot(range(len(values_train)), values_train, label=str(self.lambda_value)+r"$ \cdot Loss_{net2}^{train}$", color="green")
+		# 	plt.legend(loc="upper right", prop={'size' : 7})
+		# 	plt.legend(frameon=False)
+		# 	plt.ylabel('Loss')
+		# 	plt.grid()
+		# 	ax2.ticklabel_format(style='sci', axis='both', scilimits=(0,0))
 
-		ax3 = plt.subplot(313, sharex=ax1)
-		values_test = np.array(l_test["L_f - L_r"])
-		values_train = np.array(l_train["L_f - L_r"])
-		plt.plot(range(len(values_test)), values_test, label=r"$Loss_{net1}^{test} - $"+str(float(self.lambda_value))+r"$ \cdot Loss_{net2}^{test}$", color="red", linestyle='dashed')
-		plt.plot(range(len(values_train)), values_train, label=r"$Loss_{net1}^{train} - $"+str(float(self.lambda_value))+r"$ \cdot Loss_{net2}^{train}$", color="red")
-		plt.legend(loc="upper right", prop={'size' : 7})
-		plt.grid()
-		ax3.ticklabel_format(style='sci', axis='both', scilimits=(0,0))
-		plt.xlabel('Epoch')
+		# 	ax3 = plt.subplot(313, sharex=ax1)
+		# 	values_test = np.array(l_test["L_f - L_r"])
+		# 	values_train = np.array(l_train["L_f - L_r"])
+		# 	plt.plot(range(len(values_test)), values_test, label=r"$Loss_{net1}^{test} - $"+str(float(self.lambda_value))+r"$ \cdot Loss_{net2}^{test}$", color="red", linestyle='dashed')
+		# 	plt.plot(range(len(values_train)), values_train, label=r"$Loss_{net1}^{train} - $"+str(float(self.lambda_value))+r"$ \cdot Loss_{net2}^{train}$", color="red")
+		# 	plt.legend(loc="upper right", prop={'size' : 7})
+		# 	plt.grid()
+		# 	ax3.ticklabel_format(style='sci', axis='both', scilimits=(0,0))
+		# 	plt.xlabel('Epoch')
 
-		plt.legend(frameon=False)
-		plt.gcf().savefig(output_path + 'losses_' + datetime.now().strftime("%H_%M_%S") + '.png')
-		plt.gcf().clear()
+		# 	plt.legend(frameon=False)
+		# 	plt.gcf().savefig(output_path + 'losses_' + datetime.now().strftime("%H_%M_%S") + '.png')
+		# 	plt.gcf().clear()
 
-		#losses_test = {"L_f": [], "L_r": [], "L_f - L_r": []}
-		#losses_train = {"L_f": [], "L_r": [], "L_f - L_r": []}
+		# 	#losses_test = {"L_f": [], "L_r": [], "L_f - L_r": []}
+		# 	#losses_train = {"L_f": [], "L_r": [], "L_f - L_r": []}
 
-	#This function is inactive for now
-	def save_losses(self, i, network):
-		'''
-		Old function to get the losses of the network from a separate evaluate call instead of during training.
-		This gets rid of the train/test offset caused by dropout but makes the network run significantly slower
-		'''
-		#l_test = network.evaluate(self.sample_training, [self.target_training, self.target_adversarial], sample_weight = [self.weight_training.ravel(),self.weight_adversarial.ravel()], batch_size = int(self.config['BatchSize']))
-		#l_train = network.evaluate(self.sample_validation, [self.target_validation, self.target_adversarial_validation], sample_weight = [self.weight_validation.ravel(), self.weight_adversarial_validation.ravel()], batch_size = int(self.config['BatchSize']))
-		l_test = network.evaluate(self.sample_training, [self.target_training, self.target_adversarial], batch_size = int(self.config['BatchSize']))
-		l_train = network.evaluate(self.sample_validation, [self.target_validation, self.target_adversarial_validation], batch_size = int(self.config['BatchSize']))
-		self.losses_test["L_f"].append(l_test[1])
-		self.losses_test["L_r"].append(-l_test[2])
-		self.losses_test["L_f - L_r"].append(l_test[0])
-		self.losses_train["L_f"].append(l_train[1])
-		self.losses_train["L_r"].append(-l_train[2])
-		self.losses_train["L_f - L_r"].append(l_train[0])
-		print('LTEST')
-		print(l_test)
+		# #This function is inactive for now
+		# def save_losses(self, i, network):
+		# 	'''
+		# 	Old function to get the losses of the network from a separate evaluate call instead of during training.
+		# 	This gets rid of the train/test offset caused by dropout but makes the network run significantly slower
+		# 	'''
+		# 	#l_test = network.evaluate(self.sample_training, [self.target_training, self.target_adversarial], sample_weight = [self.weight_training.ravel(),self.weight_adversarial.ravel()], batch_size = int(self.config['BatchSize']))
+		# 	#l_train = network.evaluate(self.sample_validation, [self.target_validation, self.target_adversarial_validation], sample_weight = [self.weight_validation.ravel(), self.weight_adversarial_validation.ravel()], batch_size = int(self.config['BatchSize']))
+		# 	l_test = network.evaluate(self.sample_training, [self.target_training, self.target_adversarial], batch_size = int(self.config['BatchSize']))
+		# 	l_train = network.evaluate(self.sample_validation, [self.target_validation, self.target_adversarial_validation], batch_size = int(self.config['BatchSize']))
+		# 	self.losses_test["L_f"].append(l_test[1])
+		# 	self.losses_test["L_r"].append(-l_test[2])
+		# 	self.losses_test["L_f - L_r"].append(l_test[0])
+		# 	self.losses_train["L_f"].append(l_train[1])
+		# 	self.losses_train["L_r"].append(-l_train[2])
+		# 	self.losses_train["L_f - L_r"].append(l_train[0])
+		# 	print('LTEST')
+		# 	print(l_test)
 
-		#pickle.dump(lossestest,open('lossestest.jar','wb'))
-		#pickle.dump(lossestrain,open('lossestrain.jar','wb'))
+		# 	#pickle.dump(lossestest,open('lossestest.jar','wb'))
+		# 	#pickle.dump(lossestrain,open('lossestrain.jar','wb'))
 
-		if i == (self.training_iterations-1):
-			self.plot_losses(i, self.losses_test, self.losses_train)
+		# 	if i == (self.training_iterations-1):
+		# 		self.plot_losses(i, self.losses_test, self.losses_train)
 
-	def plot_roc(self):
-		'''
-		Plots the ROC curve
-		'''
-		plt.title('Receiver Operating Characteristic')
-		plt.plot(self.fpr, self.tpr, 'g--', label='$AUC_{train}$ = %0.2f'% self.auc)
-		plt.legend(loc='lower right')
-		plt.plot([0,1],[0,1],'r--')
-		plt.xlim([-0.,1.])
-		plt.ylim([-0.,1.])
-		plt.ylabel('True Positive Rate', fontsize='large')
-		plt.xlabel('False Positive Rate', fontsize='large')
-		plt.legend(frameon=False)
-		#plt.show()
-		plt.gcf().savefig(output_path + 'roc.png')
-		#plt.gcf().savefig(output_path + 'simple_ROC_' + file_extension + '.eps')
-		plt.gcf().clear()
+		# def zplot_roc(self):
+		# 	'''
+		# 	Plots the ROC curve
+		# 	'''
+		# 	plt.title('Receiver Operating Characteristic')
+		# 	plt.plot(self.fpr, self.tpr, 'g--', label='$AUC_{train}$ = %0.2f'% self.auc)
+		# 	plt.legend(loc='lower right')
+		# 	plt.plot([0,1],[0,1],'r--')
+		# 	plt.xlim([-0.,1.])
+		# 	plt.ylim([-0.,1.])
+		# 	plt.ylabel('True Positive Rate', fontsize='large')
+		# 	plt.xlabel('False Positive Rate', fontsize='large')
+		# 	plt.legend(frameon=False)
+		# 	#plt.show()
+		# 	plt.gcf().savefig(output_path + 'roc.png')
+		# 	#plt.gcf().savefig(output_path + 'simple_ROC_' + file_extension + '.eps')
+		# 	plt.gcf().clear()
 
-	def plot_separation(self):
-		'''
-		Plots the separation between signal and background events
-		'''
-		self.signal_histo = []
-		self.background_histo = []
-		for i in range(len(self.sample_validation)):
-			if self.target_validation[i] == 1:
-				self.signal_histo.append(self.model_prediction[i])
-			if self.target_validation[i] == 0:
-				self.background_histo.append(self.model_prediction[i])
+		# def zplot_separation(self):
+		# 	'''
+		# 	Plots the separation between signal and background events
+		# 	'''
+		# 	self.signal_histo = []
+		# 	self.background_histo = []
+		# 	for i in range(len(self.sample_validation)):
+		# 		if self.target_validation[i] == 1:
+		# 			self.signal_histo.append(self.model_prediction[i])
+		# 		if self.target_validation[i] == 0:
+		# 			self.background_histo.append(self.model_prediction[i])
 
-		plt.hist(self.signal_histo, range=[0., 1.], linewidth = 2, bins=30, histtype="step", density = True, color=color_tW, label = "Signal")
-		plt.hist(self.background_histo, range=[0., 1.], linewidth = 2, bins=30, histtype="step", density = True, color=color_tt, label = "Background")
-		#plt.hist(self.model_prediction[self.target_training.tolist() == 0], range=[0., 1.], linewidth = 2, bins=30, histtype="step", normed=1, color=color_tt)
-		#plt.hist(predicttest__ANN[test_target == 1],   range=[xlo, xhi], linewidth = 2, bins=bins, histtype="step", normed=1, color=color_tW2, label='$Sig_{test}$', linestyle='dashed')
-	  	#plt.hist(predicttest__ANN[test_target == 0],   range=[xlo, xhi], linewidth = 2, bins=bins, histtype="step", normed=1, color=color_tt2, label='$Bkg_{test}$', linestyle='dashed')
-		#plt.ylim(0, plt.gca().get_ylim()[1] * float(Options['yScale']))
-		plt.legend()
-		plt.xlabel('Network response', horizontalalignment='left', fontsize='large')
-		plt.ylabel('Event fraction', fontsize='large')
-		plt.legend(frameon=False)
-		#plt.title('Normalised')
-		#plt.gcf().savefig(output_path + 'ANN_NN_' + file_extension + '.png')
-		plt.gcf().savefig(output_path + 'separation_discriminator.png')
-		#plt.show()
-		plt.gcf().clear()
+		# 	plt.hist(self.signal_histo, range=[0., 1.], linewidth = 2, bins=30, histtype="step", density = True, color=color_tW, label = "Signal")
+		# 	plt.hist(self.background_histo, range=[0., 1.], linewidth = 2, bins=30, histtype="step", density = True, color=color_tt, label = "Background")
+		# 	#plt.hist(self.model_prediction[self.target_training.tolist() == 0], range=[0., 1.], linewidth = 2, bins=30, histtype="step", normed=1, color=color_tt)
+		# 	#plt.hist(predicttest__ANN[test_target == 1],   range=[xlo, xhi], linewidth = 2, bins=bins, histtype="step", normed=1, color=color_tW2, label='$Sig_{test}$', linestyle='dashed')
+		#   	#plt.hist(predicttest__ANN[test_target == 0],   range=[xlo, xhi], linewidth = 2, bins=bins, histtype="step", normed=1, color=color_tt2, label='$Bkg_{test}$', linestyle='dashed')
+		# 	#plt.ylim(0, plt.gca().get_ylim()[1] * float(Options['yScale']))
+		# 	plt.legend()
+		# 	plt.xlabel('Network response', horizontalalignment='left', fontsize='large')
+		# 	plt.ylabel('Event fraction', fontsize='large')
+		# 	plt.legend(frameon=False)
+		# 	#plt.title('Normalised')
+		# 	#plt.gcf().savefig(output_path + 'ANN_NN_' + file_extension + '.png')
+		# 	plt.gcf().savefig(output_path + 'separation_discriminator.png')
+		# 	#plt.show()
+		# 	plt.gcf().clear()
 
-	def plot_separation_adversary(self):
-		'''
-		Plot separation of the adversary network
-		'''
-		#pylint: disable=unused-variable
-		plt.title('Adversary Response')
-		axis1 = plt.subplot(211)
-		self.nominal_histo = []
-		self.systematic_histo = []
-		self.nominal_adversarial_histo = []
-		self.systematic_adversarial_histo = []
-		for i in range(len(self.sample_validation)):
-			if self.target_adversarial_validation[i] == 1 and self.target_validation[i] == 1:
-				self.nominal_histo.append(self.model_prediction[i])
-			if self.target_adversarial_validation[i] == 0 and self.target_validation[i] == 1:
-				self.systematic_histo.append(self.model_prediction[i])
+		# def zplot_separation_adversary(self):
+		# 	'''
+		# 	Plot separation of the adversary network
+		# 	'''
+		# 	#pylint: disable=unused-variable
+		# 	plt.title('Adversary Response')
+		# 	axis1 = plt.subplot(211)
+		# 	self.nominal_histo = []
+		# 	self.systematic_histo = []
+		# 	self.nominal_adversarial_histo = []
+		# 	self.systematic_adversarial_histo = []
+		# 	for i in range(len(self.sample_validation)):
+		# 		if self.target_adversarial_validation[i] == 1 and self.target_validation[i] == 1:
+		# 			self.nominal_histo.append(self.model_prediction[i])
+		# 		if self.target_adversarial_validation[i] == 0 and self.target_validation[i] == 1:
+		# 			self.systematic_histo.append(self.model_prediction[i])
 
-		ns1, bins1, patches1 = plt.hist(self.nominal_histo, range=[0., 1.], linewidth = 2, bins=30, histtype="step", density = True, color=color_tW, label = "Nominal")
-		ns2, bins2, patches2 = plt.hist(self.systematic_histo, range=[0., 1.], linewidth = 2, bins=30, histtype="step", density = True, color=color_sys, label = "Systematics")
-		#plt.hist(self.model_prediction[self.target_training.tolist() == 0], range=[0., 1.], linewidth = 2, bins=30, histtype="step", normed=1, color=color_tt)
-		#plt.hist(predicttest__ANN[test_target == 1],   range=[xlo, xhi], linewidth = 2, bins=bins, histtype="step", normed=1, color=color_tW2, label='$Sig_{test}$', linestyle='dashed')
-		#plt.hist(predicttest__ANN[test_target == 0],   range=[xlo, xhi], linewidth = 2, bins=bins, histtype="step", normed=1, color=color_tt2, label='$Bkg_{test}$', linestyle='dashed')
-		#plt.ylim(0, plt.gca().get_ylim()[1] * float(Options['yScale']))
-		plt.legend()
-		plt.ylabel('Event fraction', fontsize='large')
-		plt.legend(frameon=False)
+		# 	ns1, bins1, patches1 = plt.hist(self.nominal_histo, range=[0., 1.], linewidth = 2, bins=30, histtype="step", density = True, color=color_tW, label = "Nominal")
+		# 	ns2, bins2, patches2 = plt.hist(self.systematic_histo, range=[0., 1.], linewidth = 2, bins=30, histtype="step", density = True, color=color_sys, label = "Systematics")
+		# 	#plt.hist(self.model_prediction[self.target_training.tolist() == 0], range=[0., 1.], linewidth = 2, bins=30, histtype="step", normed=1, color=color_tt)
+		# 	#plt.hist(predicttest__ANN[test_target == 1],   range=[xlo, xhi], linewidth = 2, bins=bins, histtype="step", normed=1, color=color_tW2, label='$Sig_{test}$', linestyle='dashed')
+		# 	#plt.hist(predicttest__ANN[test_target == 0],   range=[xlo, xhi], linewidth = 2, bins=bins, histtype="step", normed=1, color=color_tt2, label='$Bkg_{test}$', linestyle='dashed')
+		# 	#plt.ylim(0, plt.gca().get_ylim()[1] * float(Options['yScale']))
+		# 	plt.legend()
+		# 	plt.ylabel('Event fraction', fontsize='large')
+		# 	plt.legend(frameon=False)
 
 
-		ratioArray = []
-		for iterator, _ in enumerate(ns1):
-			if ns1[iterator] > 0:
-				ratioArray.append(ns2[iterator]/ns1[iterator])
-			else:
-				ratioArray.append(1.)
+		# 	ratioArray = []
+		# 	for iterator, _ in enumerate(ns1):
+		# 		if ns1[iterator] > 0:
+		# 			ratioArray.append(ns2[iterator]/ns1[iterator])
+		# 		else:
+		# 			ratioArray.append(1.)
 
-		axis2 = plt.subplot(212, sharex = axis1)
-		#axis2.set_ylim([0., 2.])
-		plt.plot(bins1[:-1], ratioArray, color = "blue", drawstyle = 'steps-mid')
-		#plt.plot(bins1[:-1], ratioArray, color = "blue", marker = "_", linestyle = 'None', markersize = 12)
-		plt.hlines(1, xmin = -0.0, xmax = 1.0)
-		plt.xlabel('Network response', horizontalalignment='left', fontsize='large')
-		plt.ylabel('Event ratio')
-		#plt.title('Normalised')
-		#plt.gcf().savefig(output_path + 'ANN_NN_' + file_extension + '.png')
-		plt.gcf().savefig(output_path + 'separation_adversary.png')
-		#plt.show()
-		plt.gcf().clear()
-		#pylint: enable=unused-variable
+		# 	axis2 = plt.subplot(212, sharex = axis1)
+		# 	#axis2.set_ylim([0., 2.])
+		# 	plt.plot(bins1[:-1], ratioArray, color = "blue", drawstyle = 'steps-mid')
+		# 	#plt.plot(bins1[:-1], ratioArray, color = "blue", marker = "_", linestyle = 'None', markersize = 12)
+		# 	plt.hlines(1, xmin = -0.0, xmax = 1.0)
+		# 	plt.xlabel('Network response', horizontalalignment='left', fontsize='large')
+		# 	plt.ylabel('Event ratio')
+		# 	#plt.title('Normalised')
+		# 	#plt.gcf().savefig(output_path + 'ANN_NN_' + file_extension + '.png')
+		# 	plt.gcf().savefig(output_path + 'separation_adversary.png')
+		# 	#plt.show()
+		# 	plt.gcf().clear()
+		# 	#pylint: enable=unused-variable
 
-	def plot_all(self):
-		'''
-		Plot the network response
-		'''
-		#pylint: disable=unused-variable
-		plt.title('Adversary Response')
-		axis1 = plt.subplot(211)
-		self.nominal_histo = []
-		self.systematic_histo = []
-		self.nominal_adversarial_histo = []
-		self.systematic_adversarial_histo = []
-		for i, _ in enumerate(self.sample_validation):
-			if self.target_adversarial_validation[i] == 1 and self.target_validation[i] == 1:
-				self.nominal_histo.append(self.model_prediction[i])
-			if self.target_adversarial_validation[i] == 0 and self.target_validation[i] == 1:
-				self.systematic_histo.append(self.model_prediction[i])
+		# def zplot_all(self):
+		# 	'''
+		# 	Plot the network response
+		# 	'''
+		# 	#pylint: disable=unused-variable
+		# 	plt.title('Adversary Response')
+		# 	axis1 = plt.subplot(211)
+		# 	self.nominal_histo = []
+		# 	self.systematic_histo = []
+		# 	self.nominal_adversarial_histo = []
+		# 	self.systematic_adversarial_histo = []
+		# 	for i, _ in enumerate(self.sample_validation):
+		# 		if self.target_adversarial_validation[i] == 1 and self.target_validation[i] == 1:
+		# 			self.nominal_histo.append(self.model_prediction[i])
+		# 		if self.target_adversarial_validation[i] == 0 and self.target_validation[i] == 1:
+		# 			self.systematic_histo.append(self.model_prediction[i])
 
-		ns1, bins1, patches1 = plt.hist(self.nominal_histo, range=[0., 1.], linewidth = 2, bins=30, histtype="step", density = True, color=color_tW, label = "Nominal")
-		ns2, bins2, patches2 = plt.hist(self.systematic_histo, range=[0., 1.], linewidth = 2, bins=30, histtype="step", density = True, color=color_sys, label = "Systematics")
-		#pylint: enable=unused-variable
+		# 	ns1, bins1, patches1 = plt.hist(self.nominal_histo, range=[0., 1.], linewidth = 2, bins=30, histtype="step", density = True, color=color_tW, label = "Nominal")
+		# 	ns2, bins2, patches2 = plt.hist(self.systematic_histo, range=[0., 1.], linewidth = 2, bins=30, histtype="step", density = True, color=color_sys, label = "Systematics")
+		# 	#pylint: enable=unused-variable
 
-	def plot_accuracy(self):
-		'''
-		Plot the accuracy of the model over time
-		'''
-		plt.plot(self.model_history.history['binary_accuracy'])
-		plt.plot(self.model_history.history['val_binary_accuracy'])
-		plt.title('model accuracy')
-		plt.ylabel('accuracy')
-		plt.xlabel('epoch')
-		plt.legend(['train', 'test'], loc='upper left')
-		#plt.show()
-		plt.gcf().savefig(output_path + 'acc.png')
-		plt.gcf().clear()
+	# def zplot_accuracy(self):
+		# '''
+		# Plot the accuracy of the model over time
+		# '''
+		# plt.plot(self.model_history.history['binary_accuracy'])
+		# plt.plot(self.model_history.history['val_binary_accuracy'])
+		# plt.title('model accuracy')
+		# plt.ylabel('accuracy')
+		# plt.xlabel('epoch')
+		# plt.legend(['train', 'test'], loc='upper left')
+		# #plt.show()
+		# plt.gcf().savefig(output_path + 'acc.png')
+		# plt.gcf().clear()
+
+	def plot_results(self):
+		'''Plot the results of the training. Plotting functions are in plot_defs.py'''
+
+		if not os.path.exists(self.config['ResultsDir']):
+			os.makedirs(self.config['ResultsDir'])
+
+		path_prefix = f'{self.config["ResultsDir"]}/{self.time_start}_{self.custom_config}/'
+		if not os.path.exists(path_prefix):
+			os.makedirs(path_prefix)
+
+		plot_defs.plot_sep_all(path_prefix, self.sample_validation, self.target_validation, self.target_adversarial_validation, self.model_prediction, self.roc_dict['auc_test'])
+		plot_defs.plot_roc(path_prefix, self.roc_dict)
+		plot_defs.plot_losses_combined(path_prefix, self.model_history.history['model_loss'], self.model_history.history['val_model_loss'], self.model_history.history['model_2_loss'], self.model_history.history['val_model_2_loss'], self.model_history.history['loss'], self.model_history.history['val_loss'])
+		plot_acc(path_prefix, model_history.history['model_accuracy'], model_history.history['val_model_accuracy'])
+
+		
 
 	def save_tar(self):
 		'''
 		Saves some important bits, including predictions and stuff for plotting and tars it for easy transport
 		'''
 
+		if not self.save_tar_file:
+			return
+
 		outfileName = 'ANN_out' + self.custom_config + '_' + self.time_start
 		logging.debug(f'Saving tar file: {outfileName}.tar')
 
+
+
 		#pickle.dump(self.model_history.history, open('history.pickle', 'wb'))
+		pickle.dump(self.roc_dict, open('roc_dict.pickle','wb'))
 		pickle.dump(self.sample_validation, open('sample_validation.pickle','wb'))
 		pickle.dump(self.target_validation, open('target_validation.pickle','wb'))
 		pickle.dump(self.model_prediction, open('model_prediction.pickle','wb'))
 		pickle.dump(self.adversary_prediction, open('adversary_prediction.pickle','wb'))
 		pickle.dump(self.target_adversarial_validation, open('target_adversarial_validation.pickle','wb'))
-		pickle.dump(self.losses_test,open('losses_test.pickle','wb'))
-		pickle.dump(self.losses_train,open('losses_train.pickle','wb'))
-		pickle.dump(self.model_history_array, open('model_history_array.pickle','wb'))
-		pickle.dump(self.adversary_history_array, open('adversary_history_array.pickle','wb'))
+		#pickle.dump(self.losses_test,open('losses_test.pickle','wb'))
+		#pickle.dump(self.losses_train,open('losses_train.pickle','wb'))
+		pickle.dump(self.model_history.history, open('model_history.pickle','wb'))
 		pickle.dump(self.discriminator_history.history, open('discriminator_history.pickle','wb'))
+		if self.adversary_pretrain_history:
+			pickle.dump(self.adversary_pretrain_history.history, open('adversary_pretrain_history.pickle','wb'))
 
 		#writes the options used in this net into a separate text file
 		with open('config.txt','w') as f:
@@ -882,6 +825,9 @@ class ANN_environment(object):
 		Saves input data as well as model prediction to a single root file for further use
 		'''
 
+		if not self.save_root_file:
+			return
+
 		outfileName = 'ANN_out' + self.custom_config + '_' + self.time_start
 		logging.debug(f'Saving root file: {outfileName}.root')
 
@@ -890,6 +836,7 @@ class ANN_environment(object):
 		background_histo = []
 		signal_sys_histo = []
 		background_sys_histo = []
+		logging.debug('Filling arrays')
 		for i in range(len(self.sample_validation)):
 			if self.target_validation[i] == 1 and self.target_adversarial_validation[i] == 1:
 				signal_histo.append(self.model_prediction[i])
@@ -901,16 +848,18 @@ class ANN_environment(object):
 				background_sys_histo.append(self.model_prediction[i])
 
 
-		list_samples = [self.signal_tree, self.signal_systematics_tree, self.background_tree, self.background_systematics_tree]
-		list_names = [self.config['SignalSample'],self.config['SignalSystematicsSample'],self.config['BackgroundSample'],self.config['BackgroundSystematicsSample']]
+		list_samples = list(filter(lambda x: x != None, [self.signal_tree, self.signal_systematics_tree, self.background_tree, self.background_systematics_tree]))
+		list_names = list(filter(lambda x: x != 'NONE',[self.config['SignalSample'],self.config['SignalSystematicsSample'],self.config['BackgroundSample'],self.config['BackgroundSystematicsSample']]))
 		list_pred = [signal_histo, signal_sys_histo, background_histo, background_sys_histo]
 
-		# read the input data and dump it back into a new root file together with the prediction, until ur.update is implemented
+		logging.debug(list_names)
+		# read the input data and dump it back into a new root file together with the prediction
 		try:
 			with ur.recreate(outfileName + '.root') as f:
 				logging.debug('Building root file')
 
 				for i, _ in enumerate(list_samples):
+					logging.debug(f'Processing {list_names[i]}')
 					vartype_dict = {}
 					var_dict = {}
 					# read all the variables
@@ -931,9 +880,10 @@ class ANN_environment(object):
 						f[list_names[i]][var].newbasket(val)
 		except:
 			logging.error(f'Failed to create root file: {outfileName}')
+			return
 
-		os.system(f'mv {outfileName}.root {self.root_file_dir}')
-		logging.debug('Root file saved')
+		os.system(f'mv {outfileName}.root {self.config["RootFileDir"]}')
+		logging.info('Root file saved')
 
 	def print_config(self):
 		'''

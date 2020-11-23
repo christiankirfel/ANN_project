@@ -8,5 +8,3 @@ deltapT_lep1_lep2
 mT_jet1met
 mass_lep2jet1met
 pT_jetS1
-nsoftjets
-nsoftbjets

@@ -6,8 +6,10 @@ from subprocess import check_output
 import logging
 import sys
 
+# Set the user here
 user = 's6niboei'
 
+# Debug stuff
 debug_levels = {'DEBUG': logging.DEBUG,
 				'INFO': logging.INFO,
 				'WARNING': logging.WARNING,
@@ -18,8 +20,9 @@ if len(sys.argv)==2 and str(sys.argv[1]) in debug_levels.keys():
 else:
 	logging.basicConfig(level = logging.WARNING)
 
-
+# check output
 file_string = str(check_output(['condor_q','-global']))
+# split output by nodes
 jobs_list = file_string.split('--')
 
 print_list = [['NODE','JOB START','JOB NAME','JOB STATUS','JOB IDs'],
@@ -38,7 +41,9 @@ class bcolors:
 	BOLD = '\033[1m'
 	UNDERLINE = '\033[4m'
 
+# fish out the jobs of user and print them in a nice looking way
 for job in jobs_list:
+	# split lines
 	temp_list = job.split('\\n')
 	logging.debug(temp_list[0].split(' '))
 	if 'Schedd:' in temp_list[0]:
@@ -46,20 +51,16 @@ for job in jobs_list:
 		# get server name
 		server_name = temp_list[0].split()[1]
 		# get batch name and job numbers
-		try:
-			logging.debug(temp_list[2])
-		except:
-			pass
 		for j in range(2,6):
 			try:
-				assert temp_list[j].split()[0] == 's6niboei'
+				assert temp_list[j].split()[0] == user
 			except:
 				continue
 			info_list = temp_list[j].split()
 			batch_name = info_list[1]
 
 			job_start = f'{info_list[2]} {info_list[3]}'
-			job_ids = f'{info_list[9]}'
+			job_ids = ' '.join(info_list[9:])
 			if logging.root.level == logging.DEBUG:
 				logging.debug('INFO_LIST:')
 				_ = [logging.debug(f'{k}: {info_list[k]}') for k in range(len(info_list))]
